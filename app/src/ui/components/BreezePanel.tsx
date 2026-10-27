@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useApp } from '../../store'
 import { redirectUri } from '../../providers/fyers/auth'
 import { runBreezeDiagnostics, type DiagStep } from '../../providers/breeze/diagnostics'
+import { getRelayCode, setRelayCode } from '../../providers/breeze/session'
 import { dateTime } from '../format'
 
 const dotClass = (s: DiagStep['status']) => (s === 'ok' ? 'bg-up/20 text-up' : s === 'fail' ? 'bg-down/15 text-down' : 'bg-warn/20 text-warn')
@@ -28,13 +29,25 @@ export function BreezePanel() {
     <div className="grid gap-5 lg:grid-cols-2">
       <div className="space-y-3">
         <div className={`rounded-xl border p-3 text-xs ${helperTone}`}>
-          <span className="font-medium text-ink">Local helper: {breeze.helper === 'ok' ? 'running' : breeze.helper === 'missing' ? 'not available' : 'checking…'}</span>
+          <span className="font-medium text-ink">Breeze relay: {breeze.helper === 'ok' ? 'running' : breeze.helper === 'missing' ? 'not available' : 'checking…'}</span>
           <p className="mt-1">
             {breeze.helper === 'missing'
-              ? 'Breeze blocks browsers (no CORS, and its login call is a GET with a body), so it only works through a helper that ships with the dev server. Start the app with npm run dev. An installed or hosted copy cannot use Breeze.'
-              : 'Breeze calls are relayed by your own dev server on this machine. Nothing leaves your computer except the calls to ICICI.'}
+              ? 'Breeze blocks browsers (no CORS, and its login call is a GET with a body), so it needs a small relay on the same server as this app: npm run dev locally, or the api/ folder deployed on Vercel. A plain static host cannot use Breeze.'
+              : 'Calls to ICICI are passed through the relay on this app’s own server. It stores nothing and only forwards your own login and history requests.'}
           </p>
         </div>
+        {breeze.needsCode && (
+          <label className="block">
+            <span className="label">Relay access code</span>
+            <input
+              className="field mt-1" type="password" autoComplete="off" placeholder="Set as BREEZE_RELAY_CODE on the server"
+              defaultValue={getRelayCode()}
+              onChange={e => setRelayCode(e.target.value.trim())}
+              onBlur={() => void checkBreezeHelper()}
+            />
+            <span className="mt-1 block text-[11px] text-mute">This relay is protected. The code is kept in this browser only.</span>
+          </label>
+        )}
 
         <div className={`rounded-xl border p-3 text-sm ${session ? 'border-up/30 bg-up/5' : 'border-line'}`}>
           <div className="flex items-center justify-between gap-2">

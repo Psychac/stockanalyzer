@@ -1,6 +1,6 @@
 import { ProviderError } from '../errors'
 import { RateLimiter } from '../rateLimiter'
-import { HELPER, HELPER_MISSING, helperHeaders, type BreezeSession } from './session'
+import { HELPER, HELPER_MISSING, helperHeaders, relayRefusal, type BreezeSession } from './session'
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -30,14 +30,16 @@ export class BreezeClient {
     const s = this.session()
     let res: Response
     try {
-      res = await this.fetchFn(`${HELPER}/v2/historicalcharts?${new URLSearchParams(params)}`, {
-        headers: { 'X-SessionToken': s.sessionToken, apikey: s.appKey, ...helperHeaders },
+      res = await this.fetchFn(`${HELPER}/history?${new URLSearchParams(params)}`, {
+        headers: { 'X-SessionToken': s.sessionToken, apikey: s.appKey, ...helperHeaders() },
       })
     } catch {
-      throw new ProviderError('Could not reach the Breeze helper or Breeze.', 'network')
+      throw new ProviderError('Could not reach the Breeze relay or Breeze.', 'network')
     }
-    const body = (await res.json().catch(() => null)) as { Success?: BreezeRow[] | null; Status?: number; Error?: string | null } | null
+    const body = (await res.json().catch(() => null)) as { Success?: BreezeRow[] | null; Status?: number; Error?: string | null; relayError?: string; message?: string } | null
     if (body === null) throw new ProviderError(HELPER_MISSING, 'api')
+    const refused = relayRefusal(body, res.status)
+    if (refused) throw refused
     if (res.status === 429) throw new ProviderError('Breeze rate limit hit. Wait a minute before refreshing again.', 'rate')
     if (res.status === 401 || body.Status === 401 || /invalid user|session/i.test(body.Error ?? '')) {
       throw new ProviderError('Breeze rejected the session. It has expired or is not valid. Log in again.', 'auth', 401)

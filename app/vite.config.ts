@@ -12,6 +12,8 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // API calls (the Breeze relay) must always reach the network, never the app shell.
+      workbox: { navigateFallbackDenylist: [/^\/api\//] },
       includeAssets: ['icon.svg'],
       manifest: {
         name: 'Stock Analyzer',
@@ -29,5 +31,5 @@ export default defineConfig({
       },
     }),
   ],
-  test: { include: ['src/**/*.test.ts'] },
+  test: { include: ['src/**/*.test.ts', 'api/**/*.test.ts'] },
 })

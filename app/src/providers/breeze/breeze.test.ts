@@ -41,7 +41,7 @@ describe('Breeze session', () => {
     const now = ist('2026-10-27T10:00')
     const s = await exchangeSession('KEY', 'CODE', now, fetchFn)
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
-    expect(url).toBe('/__breeze/session')
+    expect(url).toBe('/api/breeze/session')
     expect(init.method).toBe('POST')
     expect((init.headers as Record<string, string>)['X-Breeze-Helper']).toBe('1')
     expect(JSON.parse(init.body as string)).toEqual({ appKey: 'KEY', apiSession: 'CODE' })
@@ -59,7 +59,7 @@ describe('Breeze session', () => {
     const html = async () => new Response('<!doctype html><title>app</title>', { status: 200 })
     await expect(exchangeSession('K', 'C', 0, html)).rejects.toMatchObject({ message: HELPER_MISSING })
     expect(await helperAvailable(html)).toBe(false)
-    expect(await helperAvailable(async () => json({ helper: 'breeze-dev-proxy' }))).toBe(true)
+    expect(await helperAvailable(async () => json({ helper: 'breeze-relay' }))).toBe(true)
     expect(await helperAvailable(async () => { throw new TypeError('offline') })).toBe(false)
   })
 })
@@ -69,7 +69,7 @@ describe('Breeze history', () => {
     const fetchFn = vi.fn(async () => json({ Success: [row('2026-10-23 07:00:00', 10)], Status: 200, Error: null }))
     const rows = await new BreezeClient(() => session, fastLimiter(), fetchFn).history({ stock_code: 'RELIND', exch_code: 'NSE' })
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
-    expect(url).toBe('/__breeze/v2/historicalcharts?stock_code=RELIND&exch_code=NSE')
+    expect(url).toBe('/api/breeze/history?stock_code=RELIND&exch_code=NSE')
     expect(init.headers).toMatchObject({ 'X-SessionToken': b64, apikey: 'KEY', 'X-Breeze-Helper': '1' })
     expect(JSON.stringify(init.headers)).not.toMatch(/checksum|secret/i)
     expect(rows).toHaveLength(1)

@@ -23,7 +23,7 @@ export async function runBreezeDiagnostics(session: BreezeSession | null, onUpda
   const push = (s: DiagStep) => { steps.push(s); onUpdate([...steps]) }
 
   const helper = await helperAvailable()
-  push({ label: 'Local helper', status: helper ? 'ok' : 'fail', detail: helper ? 'Reachable. Breeze calls are relayed through your dev server.' : 'Not reachable. Run the app with npm run dev (or npm run preview); installed or hosted copies cannot use Breeze.' })
+  push({ label: 'Breeze relay', status: helper ? 'ok' : 'fail', detail: helper ? 'Reachable. Breeze calls go through the relay on the same server as this app.' : 'Not reachable. Run the app with npm run dev, or deploy it with its api/ folder; a plain static host cannot use Breeze.' })
   if (!helper) return steps
 
   if (!session) { push({ label: 'Session', status: 'fail', detail: 'Not logged in. Log in with ICICI, or paste a session code, first.' }); return steps }

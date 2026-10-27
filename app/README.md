@@ -24,14 +24,34 @@ These are not real prices. The UI shows a `DEMO DATA` badge and `isLive` is hard
 Prices are cached in IndexedDB, so restarts make no history calls until a new session closes, and the app stays usable offline
 (labelled `CACHED`). The badge always says what you are looking at: `DEMO DATA`, `LIVE`, `EOD`, `CACHED`, `STALE` or `NO DATA`.
 
-**ICICI Breeze (dev machine only).** Settings → Market data → ICICI Breeze. Breeze cannot be called from a browser (its login is
-a GET with a body and its data host has no CORS), so calls go through a small helper built into the Vite dev/preview server
-(`vite/breezeHelper.ts`). It is not part of `npm run build` output: an installed or hosted copy has no Breeze access and says so.
-Use `npm run dev`, enter your app key, log in with ICICI (or paste the `API_Session` code), then press **Run test** to check each
-stage (helper, session, a real history call, symbol map, live feed). No secret key is needed or stored. History is daily bars;
-live prices use ICICI's streaming socket and only flow while the market is open.
+**ICICI Breeze (needs the relay).** Settings → Market data → ICICI Breeze. Breeze cannot be called from a browser (its login is
+a GET with a body and its data host has no CORS), so calls go through a small same-origin relay, `api/_lib/breezeRelay.ts`.
+The same code runs two ways, at the same `/api/breeze/*` paths:
 
-The helper only accepts requests from this machine's own pages, relays two fixed ICICI endpoints, and never logs request bodies.
+- **Locally:** `npm run dev` (or `npm run preview`) serves it through a Vite plugin (`vite/breezeHelper.ts`).
+- **Deployed on Vercel:** the `api/breeze/*.ts` files are serverless functions. See below.
+
+A plain static host has no relay, and the app says so instead of failing silently.
+
+Enter your app key, log in with ICICI (or paste the `API_Session` code), then press **Run test** to check each stage (relay,
+session, a real history call, symbol map, live feed). No secret key is needed or stored. History is daily bars; live prices
+use ICICI's streaming socket straight from the browser and only flow while the market is open.
+
+### Deploying the relay on Vercel
+
+1. Import the GitHub repo in Vercel and set **Root Directory** to `app`. The Vite preset and `vercel.json` do the rest.
+2. Optional but recommended for a public URL: add an environment variable `BREEZE_RELAY_CODE`. The relay then refuses every call
+   that carries no matching code, and Settings shows a field for it (kept in that browser only).
+3. In the Breeze API portal, set your app's redirect URL to the deployed address (Settings shows the exact value).
+4. Open the deployed app, choose ICICI Breeze, log in, and press **Run test**.
+
+`vercel.json` pins the functions to Mumbai (`bom1`), because ICICI may treat foreign data-centre IPs differently. That is an
+untested assumption: nothing here has been run from Vercel's network.
+
+What the relay does and does not do: it forwards two fixed ICICI endpoints, accepts only whitelisted parameters and same-origin
+callers, stores nothing, and does not log request bodies. Your session token does pass through the deployment on each call,
+so treat the Vercel project as holding that trust. It has no rate limiting of its own, so the access code is what stops a
+stranger spending your function quota.
 
 Why FYERS is the portable choice and Breeze needs the helper, plus what is still unverified: [`../docs/provider-feasibility.md`](../docs/provider-feasibility.md).
 

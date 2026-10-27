@@ -9,6 +9,18 @@ Nothing below was verified with a real account session; see "Not yet verified".
 supported only on a developer machine through a local helper inside the Vite dev/preview server (added 2026-10-27 at the user's
 request, since they have a Breeze account). Making Breeze work in an installed app needs a native wrapper; see below.
 
+### Breeze relay: Vercel, and why history is a function too
+
+Your friend's Breeze app is hosted on Vercel, i.e. it uses a server-side hop. Probing showed what actually needs code (2026-10-27):
+the session call must be a real GET with a body (a query string gives `415`; `POST` and method-override headers give `405`), so it
+needs a function. History v2 works with headers alone, so a `vercel.json` rewrite might suffice, but forwarding custom headers
+through an external rewrite was not verified, so history is a function as well. Both live in `api/breeze/*` and share
+`api/_lib/breezeRelay.ts` with the dev server, so local tests exercise the deployed code.
+
+Not verified: a real Vercel deployment (including whether ICICI answers requests from Vercel's IPs), and whether Vercel's Node
+runtime compiles the `.js`-suffixed imports in `api/breeze/*.ts` as expected. The bundled entrypoints were run against real ICICI
+from a plain Node server instead.
+
 ### Breeze update: what the local helper changed (probed live)
 
 | Finding | Evidence |

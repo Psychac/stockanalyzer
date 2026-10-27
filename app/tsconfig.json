@@ -14,5 +14,5 @@
     "noEmit": true,
     "types": ["vite/client", "vite-plugin-pwa/client", "node"]
   },
-  "include": ["src", "vite", "vite.config.ts"]
+  "include": ["src", "api", "vite", "vite.config.ts"]
 }

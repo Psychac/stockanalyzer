@@ -3,10 +3,10 @@ import { ProviderError } from '../errors'
 
 /**
  * Breeze cannot be called from a browser: its session call is a GET with a JSON body and its data host sends no CORS
- * headers. These calls go through a local helper that exists only in the Vite dev/preview server (`vite/breezeHelper.ts`).
- * An installed or statically hosted copy of the app has no helper, and says so.
+ * headers. These calls go through a same-origin relay (`api/_lib/breezeRelay.ts`) served by the Vite dev/preview server
+ * or deployed as Vercel functions. A host without the relay answers with the app's own HTML, and the app says so.
  */
-export const HELPER = '/__breeze'
+export const HELPER = '/api/breeze'
 
 export interface BreezeSession {
   appKey: string
@@ -23,8 +23,21 @@ export interface BreezeSession {
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
 const defaultFetch: FetchFn = (i, init) => fetch(i, init)
 
-/** Required on every helper call. A custom header forces a CORS preflight, which stops other websites poking the helper. */
-export const helperHeaders = { 'X-Breeze-Helper': '1' }
+const CODE_KEY = 'breeze.relayCode'
+
+/** Optional shared secret for a deployed relay (its BREEZE_RELAY_CODE setting). Kept in this browser only. */
+export function getRelayCode(): string {
+  try { return localStorage.getItem(CODE_KEY) ?? '' } catch { return '' }
+}
+export function setRelayCode(code: string) {
+  try { if (code) localStorage.setItem(CODE_KEY, code); else localStorage.removeItem(CODE_KEY) } catch { /* not persisted */ }
+}
+
+/** Required on every relay call. A custom header forces a CORS preflight, which stops other websites poking the relay. */
+export function helperHeaders(): Record<string, string> {
+  const code = getRelayCode()
+  return code ? { 'X-Breeze-Helper': '1', 'X-Relay-Code': code } : { 'X-Breeze-Helper': '1' }
+}
 
 export const loginUrl = (appKey: string) => `https://api.icicidirect.com/apiuser/login?api_key=${encodeURIComponent(appKey)}`
 
@@ -43,17 +56,33 @@ export function decodeSessionToken(b64: string): { userId: string; token: string
   return { userId: text.slice(0, i), token: text.slice(i + 1) }
 }
 
-export async function helperAvailable(fetchFn: FetchFn = defaultFetch): Promise<boolean> {
+export interface HelperInfo {
+  available: boolean
+  /** The deployed relay was configured with an access code. */
+  needsCode: boolean
+}
+
+export async function helperInfo(fetchFn: FetchFn = defaultFetch): Promise<HelperInfo> {
   try {
-    const res = await fetchFn(`${HELPER}/ping`, { headers: helperHeaders })
-    const body = (await res.json().catch(() => null)) as { helper?: string } | null
-    return res.ok && body?.helper === 'breeze-dev-proxy'
+    const res = await fetchFn(`${HELPER}/ping`, { headers: helperHeaders() })
+    const body = (await res.json().catch(() => null)) as { helper?: string; needsCode?: boolean } | null
+    const available = res.ok && body?.helper === 'breeze-relay'
+    return { available, needsCode: available && body?.needsCode === true }
   } catch {
-    return false
+    return { available: false, needsCode: false }
   }
 }
 
-const HELPER_MISSING = 'The Breeze helper is not running. Breeze only works through the local dev server (npm run dev); an installed or hosted copy cannot reach it.'
+export const helperAvailable = async (fetchFn: FetchFn = defaultFetch) => (await helperInfo(fetchFn)).available
+
+const HELPER_MISSING = 'The Breeze relay is not available here. Run the app with npm run dev, or deploy it with its api/ folder (see the README). A plain static host cannot reach Breeze.'
+
+/** The relay refuses callers it does not trust before ICICI is ever contacted. */
+export function relayRefusal(body: { relayError?: string; message?: string } | null, status: number): ProviderError | null {
+  if (status !== 403 || !body?.relayError) return null
+  if (body.relayError === 'code') return new ProviderError('The Breeze relay needs its access code. Enter it in Settings.', 'api')
+  return new ProviderError(`The Breeze relay refused the request: ${body.message ?? 'not allowed'}`, 'api')
+}
 
 /** Documented error strings from the official SDK. */
 function loginError(message: string): ProviderError {
@@ -68,15 +97,17 @@ export async function exchangeSession(appKey: string, apiSession: string, now = 
   try {
     res = await fetchFn(`${HELPER}/session`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...helperHeaders },
+      headers: { 'Content-Type': 'application/json', ...helperHeaders() },
       body: JSON.stringify({ appKey, apiSession }),
     })
   } catch {
-    throw new ProviderError('Could not reach the Breeze helper.', 'network')
+    throw new ProviderError('Could not reach the Breeze relay.', 'network')
   }
-  const body = (await res.json().catch(() => null)) as { Success?: { session_token?: string } | null; Error?: string | null; helper?: string } | null
+  const body = (await res.json().catch(() => null)) as { Success?: { session_token?: string } | null; Error?: string | null; relayError?: string; message?: string } | null
   // A static host answers unknown paths with the app's own HTML, which is not JSON.
   if (body === null) throw new ProviderError(HELPER_MISSING, 'api')
+  const refused = relayRefusal(body, res.status)
+  if (refused) throw refused
   const token = body.Success?.session_token
   if (!res.ok || !token) throw loginError(body.Error ?? `HTTP ${res.status}`)
   const { userId, token: streamToken } = decodeSessionToken(token)
