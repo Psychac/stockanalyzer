@@ -79,6 +79,19 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   })
 }
 
+function readForm(req: IncomingMessage): Promise<URLSearchParams> {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    const chunks: Buffer[] = []
+    req.on('data', (c: Buffer) => {
+      size += c.length
+      if (size > MAX_BODY) { reject(new Error('body too large')); req.destroy() } else chunks.push(c)
+    })
+    req.on('end', () => resolve(new URLSearchParams(Buffer.concat(chunks).toString('utf8'))))
+    req.on('error', reject)
+  })
+}
+
 export function createRelay(o: RelayOptions = {}) {
   const request = o.request ?? https.request
 
@@ -165,5 +178,32 @@ export function createRelay(o: RelayOptions = {}) {
     await forward(res, { hostname: DATA.hostname, path: `${DATA.path}?${out}`, method: 'GET', headers: { 'Content-Type': 'application/json', 'X-SessionToken': token, apikey } })
   }
 
-  return { ping, session, history }
+  /**
+   * ICICI returns the browser to the redirect URL with a POST (a static page answers that with HTTP 405), carrying the
+   * one-time code as `apisession` in the query string and possibly the form body. Take the code from either, and send
+   * the browser on to the app with a plain GET under a different parameter name so a rewrite cannot loop.
+   * It only ever redirects to this app's own root, and a malformed code just lands on the app without one.
+   */
+  const callback: Handler = async (req, res) => {
+    let code: string | null = null
+    const take = (params: URLSearchParams) => {
+      for (const [k, v] of params) if (!code && k.toLowerCase().replace(/_/g, '') === 'apisession' && v) code = v
+    }
+    take(new URL(req.url ?? '', 'http://relay').searchParams)
+    if (!code && req.method === 'POST') {
+      try {
+        const pre = (req as { body?: unknown }).body
+        if (typeof pre === 'string') take(new URLSearchParams(pre))
+        else if (pre && typeof pre === 'object') take(new URLSearchParams(Object.entries(pre as Record<string, unknown>).filter(([, v]) => typeof v === 'string') as [string, string][]))
+        else take(await readForm(req))
+      } catch { /* no usable body */ }
+    }
+    res.statusCode = 303
+    res.setHeader('location', code && CREDENTIAL.test(code) ? `/?breeze_session=${encodeURIComponent(code)}` : '/')
+    res.setHeader('cache-control', 'no-store')
+    res.setHeader('referrer-policy', 'no-referrer')
+    res.end()
+  }
+
+  return { ping, session, history, callback }
 }

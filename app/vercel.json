@@ -3,5 +3,10 @@
   "regions": ["bom1"],
   "functions": {
     "api/breeze/*.ts": { "maxDuration": 10 }
-  }
+  },
+  "rewrites": [
+    { "source": "/", "has": [{ "type": "query", "key": "apisession" }], "destination": "/api/breeze/callback" },
+    { "source": "/", "has": [{ "type": "query", "key": "API_Session" }], "destination": "/api/breeze/callback" },
+    { "source": "/", "has": [{ "type": "query", "key": "api_session" }], "destination": "/api/breeze/callback" }
+  ]
 }

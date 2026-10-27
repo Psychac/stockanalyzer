@@ -30,6 +30,7 @@ describe('Breeze session', () => {
     expect(apiSessionFromSearch('?api_session=zzz')).toBe('zzz')
     expect(apiSessionFromSearch('?apisession=abc')).toBe('abc') // the spelling a real redirect used
     expect(apiSessionFromSearch('?apisession=')).toBeNull()
+    expect(apiSessionFromSearch('?breeze_session=fwd')).toBe('fwd') // forwarded by the server-side callback
     expect(apiSessionFromSearch('?auth_code=fyers')).toBeNull()
     expect(apiSessionFromSearch('')).toBeNull()
   })

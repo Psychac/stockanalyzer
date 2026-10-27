@@ -47,7 +47,11 @@ export const loginUrl = (appKey: string) => `https://api.icicidirect.com/apiuser
  */
 export function apiSessionFromSearch(search: string): string | null {
   const q = new URLSearchParams(search)
-  for (const [k, v] of q) if (k.toLowerCase().replace(/_/g, '') === 'apisession' && v) return v
+  for (const [k, v] of q) {
+    const name = k.toLowerCase().replace(/_/g, '')
+    // `breeze_session` is what the server-side callback forwards after catching ICICI's POST.
+    if ((name === 'apisession' || name === 'breezesession') && v) return v
+  }
   return null
 }
 

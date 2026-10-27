@@ -9,12 +9,16 @@ import { createRelay } from '../api/_lib/breezeRelay'
 const relay = createRelay({ loopbackOnly: true })
 
 const handler: Connect.NextHandleFunction = async (req, res, next) => {
-  const path = new URL(req.url ?? '', 'http://local').pathname
+  const u = new URL(req.url ?? '', 'http://local')
+  const path = u.pathname
+  // Same rule as vercel.json: a login return carrying the code goes through the callback, which fixes ICICI's POST.
+  if (path === '/' && [...u.searchParams.keys()].some(k => k.toLowerCase().replace(/_/g, '') === 'apisession')) return relay.callback(req, res)
   if (!path.startsWith('/api/breeze/')) return next()
   switch (path) {
     case '/api/breeze/ping': return relay.ping(req, res)
     case '/api/breeze/session': return relay.session(req, res)
     case '/api/breeze/history': return relay.history(req, res)
+    case '/api/breeze/callback': return relay.callback(req, res)
     default:
       res.statusCode = 404
       res.setHeader('content-type', 'application/json')

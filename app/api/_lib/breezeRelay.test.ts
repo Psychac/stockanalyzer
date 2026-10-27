@@ -41,6 +41,7 @@ async function start(opts: RelayOptions = {}, upstream = fakeUpstream()) {
     if (path === '/api/breeze/ping') return void relay.ping(req, res)
     if (path === '/api/breeze/session') return void relay.session(req, res)
     if (path === '/api/breeze/history') return void relay.history(req, res)
+    if (path === '/api/breeze/callback') return void relay.callback(req, res)
     res.statusCode = 404
     res.end()
   })
@@ -215,5 +216,33 @@ describe('relay: upstream trouble', () => {
     expect(r.json.Error).toContain('Could not reach ICICI')
     expect(r.text).not.toContain('CODE456')
     expect(r.text).not.toContain('KEY123')
+  })
+})
+
+describe('relay: login return (ICICI POSTs the browser back)', () => {
+  it("turns ICICI's POST with the code in the query into a 303 to the app root", async () => {
+    const { call, upstream } = await start()
+    const r = await call('POST', '/api/breeze/callback?apisession=ABC123%2Bxyz%3D', { 'x-breeze-helper': '' })
+    expect(r.status).toBe(303)
+    expect(r.headers.location).toBe('/?breeze_session=ABC123%2Bxyz%3D')
+    expect(r.headers['cache-control']).toBe('no-store')
+    expect(r.headers['referrer-policy']).toBe('no-referrer')
+    expect(upstream.calls).toHaveLength(0) // never contacts ICICI
+  })
+
+  it('also takes the code from a form body, and from either spelling', async () => {
+    const { call } = await start()
+    const form = await call('POST', '/api/breeze/callback', { 'content-type': 'application/x-www-form-urlencoded' }, 'API_Session=FROMBODY')
+    expect(form.headers.location).toBe('/?breeze_session=FROMBODY')
+    expect((await call('GET', '/api/breeze/callback?API_Session=UPPER')).headers.location).toBe('/?breeze_session=UPPER')
+  })
+
+  it('only ever redirects to its own root, and drops anything malformed', async () => {
+    const { call } = await start()
+    for (const q of ['', '?apisession=', '?apisession=bad%20value', '?apisession=a%0D%0ALocation:%20https://evil', '?redirect=https://evil.example&x=1']) {
+      const r = await call('POST', `/api/breeze/callback${q}`)
+      expect(r.status).toBe(303)
+      expect(r.headers.location, q).toBe('/')
+    }
   })
 })
