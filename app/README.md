@@ -31,7 +31,7 @@ The same code runs two ways, at the same `/api/breeze/*` paths:
 - **Locally:** `npm run dev` (or `npm run preview`) serves it through a Vite plugin (`vite/breezeHelper.ts`).
 - **Deployed on Vercel:** the `api/breeze/*.ts` files are serverless functions.
 
-A plain static host has no relay, and the app says so instead of failing silently.
+A plain static host has no relay, and the app says so instead of failing silently. 
 
 Enter your app key, log in with ICICI, then press **Run test** to check each stage (relay, session, a real history call, symbol
 map, live feed). No secret key is needed or stored. History is daily bars; live prices use ICICI's streaming socket straight
