@@ -23,6 +23,16 @@ export interface BreezeSession {
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
 const defaultFetch: FetchFn = (i, init) => fetch(i, init)
 
+/**
+ * Optional default for the app key field, from the VITE_BREEZE_APP_KEY build setting (a local .env.local file, or an
+ * environment variable on the host). It is baked into the built page, so anyone who can open the site can read it;
+ * set it only on a deployment you are comfortable with that for, and never commit it to the repository.
+ */
+export const defaultAppKey = (): string => {
+  const v = import.meta.env.VITE_BREEZE_APP_KEY
+  return typeof v === 'string' ? v.trim() : ''
+}
+
 const CODE_KEY = 'breeze.relayCode'
 
 /** Optional shared secret for a deployed relay (its BREEZE_RELAY_CODE setting). Kept in this browser only. */
@@ -89,7 +99,7 @@ const HELPER_MISSING = 'The Breeze relay is not available here. Run the app with
 
 /** The relay refuses callers it does not trust before ICICI is ever contacted. */
 export function relayRefusal(body: { relayError?: string; message?: string } | null, status: number): ProviderError | null {
-  if (status !== 403 || !body?.relayError) return null
+  if ((status !== 403 && status !== 400) || !body?.relayError) return null
   if (body.relayError === 'code') return new ProviderError('The Breeze relay needs its access code. Enter it in Settings.', 'api')
   return new ProviderError(`The Breeze relay refused the request: ${body.message ?? 'not allowed'}`, 'api')
 }

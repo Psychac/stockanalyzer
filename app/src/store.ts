@@ -17,7 +17,7 @@ import { beginLogin, completeLoginFromUrl } from './providers/fyers/auth'
 import type { FyersSession } from './providers/fyers/types'
 import { BreezeClient } from './providers/breeze/client'
 import { BreezeProvider } from './providers/breeze/provider'
-import { beginLogin as beginBreezeLogin, completeLoginFromUrl as completeBreezeLogin, exchangeSession, helperInfo, type BreezeSession } from './providers/breeze/session'
+import { beginLogin as beginBreezeLogin, completeLoginFromUrl as completeBreezeLogin, defaultAppKey, exchangeSession, helperInfo, type BreezeSession } from './providers/breeze/session'
 import { loadMarket } from './providers/loader'
 import type { MarketDataProvider } from './providers/types'
 
@@ -219,7 +219,7 @@ export const useApp = create<State>((set, get) => {
         userScanners: userScanners.filter(s => scannerSchema.safeParse(s).success), shortlist, settings, source,
         runs: Object.fromEntries(runs.map(r => [r.id, r])),
         fyers: { appId: creds?.appId ?? '', hasSecret: !!creds?.secret, session, loginError: null },
-        breeze: { appKey: bz?.appKey ?? '', session: bz?.session && sessionValid(bz.session) ? bz.session : null, loginError: null, helper: get().breeze.helper, needsCode: get().breeze.needsCode },
+        breeze: { appKey: bz?.appKey || defaultAppKey(), session: bz?.session && sessionValid(bz.session) ? bz.session : null, loginError: null, helper: get().breeze.helper, needsCode: get().breeze.needsCode },
       })
     },
 

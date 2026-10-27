@@ -152,7 +152,7 @@ describe('relay: session exchange', () => {
     const { call, upstream } = await start()
     for (const body of [
       'not json', '{}', JSON.stringify({ appKey: 'k' }), JSON.stringify({ appKey: 'k', apiSession: 42 }),
-      JSON.stringify({ appKey: 'k"x', apiSession: 'c' }), JSON.stringify({ appKey: 'k', apiSession: 'c\nSecond: header' }),
+      JSON.stringify({ appKey: 'k', apiSession: 'c\nSecond: header' }),
       JSON.stringify({ appKey: 'a'.repeat(600), apiSession: 'c' }), 'x'.repeat(10_000),
     ]) {
       const r = await call('POST', '/api/breeze/session', {}, body).catch(() => ({ status: 0, json: null }))
@@ -170,6 +170,26 @@ describe('relay: session exchange', () => {
       await relay.session({ method: 'POST', headers: { 'x-breeze-helper': '1', host: 'app.example' }, body: pre } as never, res as never)
     }
     expect(upstream.calls.map(c => c.body)).toEqual(Array(2).fill('{"SessionToken":"CODE456","AppKey":"KEY123"}'))
+  })
+})
+
+describe('relay: real-looking credentials', () => {
+  // Breeze app keys include symbols; this one is made up but shaped like them.
+  const symbolKey = 'ab12^Cd3$eF%g4@Hi5j6K7l8M9n0P1q'
+  it('accepts symbols in the app key and escapes them safely in the JSON body', async () => {
+    const { call, upstream } = await start()
+    const r = await call('POST', '/api/breeze/session', {}, JSON.stringify({ appKey: symbolKey, apiSession: 'CODE456' }))
+    expect(r.status).toBe(200)
+    expect(JSON.parse(upstream.calls[0].body)).toEqual({ SessionToken: 'CODE456', AppKey: symbolKey })
+    const q = await start({}, fakeUpstream({ body: '{"Success":[],"Status":200,"Error":null}' }))
+    expect((await q.call('GET', goodHistory, { 'x-sessiontoken': 'QUYyOTY3MTM6NjY5ODc5NzY=', apikey: symbolKey })).status).toBe(200)
+    expect(q.upstream.calls[0].options.headers).toMatchObject({ apikey: symbolKey })
+  })
+  it('still refuses quotes-injection attempts that would break a header or body', async () => {
+    const { call, upstream } = await start()
+    expect((await call('POST', '/api/breeze/session', {}, JSON.stringify({ appKey: 'k\r\nX: y', apiSession: 'c' }))).status).toBe(400)
+    expect((await call('POST', '/api/breeze/session', {}, JSON.stringify({ appKey: 'has space', apiSession: 'c' }))).status).toBe(400)
+    expect(upstream.calls).toHaveLength(0)
   })
 })
 

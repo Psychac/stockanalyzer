@@ -24,8 +24,12 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 const HISTORY_PARAMS = new Set(['interval', 'stock_code', 'exch_code', 'from_date', 'to_date', 'product_type', 'expiry_date', 'right', 'strike_price'])
 const PARAM_VALUE = /^[A-Za-z0-9:.+\-_ ]{0,64}$/
-/** App keys, session codes and the base64 session token. */
-const CREDENTIAL = /^[A-Za-z0-9+/=_.\-]{1,512}$/
+/**
+ * App keys, session codes and the base64 session token. Breeze app keys contain symbols such as ^ $ % @, so allow any
+ * printable ASCII (no spaces, controls or newlines). That is safe: the body is built with JSON.stringify, and header
+ * values with a CR or LF are impossible here.
+ */
+const CREDENTIAL = /^[!-~]{1,512}$/
 
 export interface RelayOptions {
   /** Shared secret callers must send as X-Relay-Code. Unset means no code is required. */
