@@ -41,10 +41,13 @@ export function helperHeaders(): Record<string, string> {
 
 export const loginUrl = (appKey: string) => `https://api.icicidirect.com/apiuser/login?api_key=${encodeURIComponent(appKey)}`
 
-/** Breeze redirects back with the one-time code as `API_Session`. */
+/**
+ * Breeze redirects back with the one-time code. The docs call the parameter `API_Session`, but a real redirect arrived as
+ * `apisession`, so match any casing with or without the underscore.
+ */
 export function apiSessionFromSearch(search: string): string | null {
   const q = new URLSearchParams(search)
-  for (const [k, v] of q) if (k.toLowerCase() === 'api_session' && v) return v
+  for (const [k, v] of q) if (k.toLowerCase().replace(/_/g, '') === 'apisession' && v) return v
   return null
 }
 

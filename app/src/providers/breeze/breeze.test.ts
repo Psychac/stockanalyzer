@@ -28,6 +28,8 @@ describe('Breeze session', () => {
   it('reads the one-time code Breeze returns on the redirect, whatever the casing', () => {
     expect(apiSessionFromSearch('?API_Session=abc123&x=1')).toBe('abc123')
     expect(apiSessionFromSearch('?api_session=zzz')).toBe('zzz')
+    expect(apiSessionFromSearch('?apisession=abc')).toBe('abc') // the spelling a real redirect used
+    expect(apiSessionFromSearch('?apisession=')).toBeNull()
     expect(apiSessionFromSearch('?auth_code=fyers')).toBeNull()
     expect(apiSessionFromSearch('')).toBeNull()
   })
