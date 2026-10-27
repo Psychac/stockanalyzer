@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useApp } from '../../store'
-import { redirectUri } from '../../providers/fyers/auth'
 import { runBreezeDiagnostics, type DiagStep } from '../../providers/breeze/diagnostics'
-import { getRelayCode, setRelayCode } from '../../providers/breeze/session'
+import { breezeRedirectUri, getRelayCode, setRelayCode } from '../../providers/breeze/session'
 import { dateTime } from '../format'
 
 const dotClass = (s: DiagStep['status']) => (s === 'ok' ? 'bg-up/20 text-up' : s === 'fail' ? 'bg-down/15 text-down' : 'bg-warn/20 text-warn')
@@ -96,8 +95,8 @@ export function BreezePanel() {
       <div className="space-y-3 text-xs text-mute">
         <div className="rounded-xl border border-line p-3">
           <div className="label mb-1">Redirect URL for your Breeze app</div>
-          <code className="block break-all rounded-lg bg-bg/60 p-2 text-[11px] text-ink">{redirectUri()}</code>
-          <p className="mt-2">Set this as the redirect URL in the Breeze API portal so login returns straight here. No secret key is needed: this app only reads data, and never signs requests or places orders.</p>
+          <code className="block break-all rounded-lg bg-bg/60 p-2 text-[11px] text-ink">{breezeRedirectUri()}</code>
+          <p className="mt-2">Set this exact address as the redirect URL in the Breeze API portal. ICICI sends you back with a POST, which only this address accepts, so do not use the site root. No secret key is needed: this app only reads data, and never signs requests or places orders.</p>
         </div>
 
         <div className="rounded-xl border border-line p-3">

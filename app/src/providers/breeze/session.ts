@@ -39,6 +39,9 @@ export function helperHeaders(): Record<string, string> {
   return code ? { 'X-Breeze-Helper': '1', 'X-Relay-Code': code } : { 'X-Breeze-Helper': '1' }
 }
 
+/** Register this as the redirect URL in the Breeze portal: ICICI POSTs the browser back, which only the callback accepts. */
+export const breezeRedirectUri = () => `${location.origin}/api/breeze/callback`
+
 export const loginUrl = (appKey: string) => `https://api.icicidirect.com/apiuser/login?api_key=${encodeURIComponent(appKey)}`
 
 /**
