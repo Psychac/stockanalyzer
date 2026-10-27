@@ -1,0 +1,835 @@
+# Stock Research & Trade Planning App
+## Product and Technical Design Specification
+
+**Version:** 1.0 — Initial design baseline  
+**Status:** Proposed; ready for implementation planning  
+**Target platforms:** Windows desktop and Android  
+**Market:** Indian equities, primarily NSE initially, with BSE support planned  
+**Architecture:** Local-first TypeScript application; no user-maintained backend  
+**Execution model:** Research, alerts and trade planning only; no automatic order placement
+
+---
+
+# 1. Executive summary
+
+The application is a personal stock research and trade-planning workspace that helps the user discover stocks, shortlist candidates, evaluate trading setups, monitor entry conditions and review historical performance.
+
+Its core differentiator is a configurable scanner engine. Users can start with built-in presets, edit and duplicate them, or create entirely custom scanners using indicators, price conditions, fundamentals and logical groups.
+
+The application combines:
+
+- Market-wide stock discovery and configurable screening.
+- Watchlists and a structured shortlist workflow.
+- Interactive candlestick charts and technical indicators.
+- Rule-based buy-entry candidates, targets, stop-losses and risk/reward calculations.
+- News and official corporate disclosures linked to individual stocks.
+- Alerts, historical replay, paper trading and performance analytics.
+- Local persistence, offline access to cached data and independent installations on Windows and Android.
+
+Signals are advisory, rule-based outputs, not guaranteed predictions. The system must explain why a setup qualifies and preserve enough history to evaluate whether its strategies actually work.
+
+## 1.1 Design principles
+
+1. **Local-first:** store user data locally; no mandatory cloud account or backend.
+2. **Independent devices:** the Android app must not depend on the user's Windows PC.
+3. **Configurable by design:** presets and custom scanners use the same underlying engine.
+4. **Transparent signals:** every score and trade level must be explainable.
+5. **Provider independence:** market-data and news providers can be replaced without rewriting the application.
+6. **Evidence over confidence:** distinguish calculated facts, heuristics and statistically validated performance.
+7. **Testability:** indicator calculations and strategy rules must be deterministic and independently testable.
+8. **Incremental delivery:** validate market data and charting before investing heavily in advanced features.
+
+# 2. Goals and non-goals
+
+## 2.1 Goals
+
+- Discover promising stocks from a configurable universe.
+- Separate stock quality from current trade-entry quality.
+- Support intraday, swing, positional and long-term workflows.
+- Display live prices when a supported data connection is available.
+- Calculate indicators locally from normalized market data.
+- Produce configurable entry zones, targets and stop-losses.
+- Explain scanner matches, failures and ranking.
+- Integrate official filings and relevant business news.
+- Support historical strategy testing and paper trading.
+- Work independently on Windows and Android without maintaining a server.
+
+## 2.2 Non-goals for the initial release
+
+- Automatic order placement or broker execution.
+- Social trading, copy trading or public signal distribution.
+- Guaranteed price predictions or unvalidated win probabilities.
+- A cloud-hosted backend, mandatory cloud synchronization or user accounts.
+- A proprietary news-reporting service.
+- Full financial-statement ingestion and valuation modelling in the first milestone.
+- Dependence on scraping exchange websites or bypassing provider restrictions.
+
+# 3. Target users and principal workflows
+
+The initial user is a single retail investor researching Indian equities.
+
+### Workflow A — Discover
+
+1. Choose a scanner preset or create a custom scanner.
+2. Select the stock universe, timeframe and filters.
+3. Run the scanner against available historical or recent market data.
+4. Inspect ranked candidates and the conditions they passed or failed.
+5. Add promising candidates to a shortlist.
+
+### Workflow B — Evaluate
+
+1. Open a shortlisted stock.
+2. Review the candlestick chart, indicators, volume and support/resistance.
+3. Inspect the current strategy setup and its explanation.
+4. Review relevant corporate announcements and news.
+5. Decide whether to monitor, paper-trade or ignore the candidate.
+
+### Workflow C — Monitor
+
+1. Subscribe to live data for selected stocks where supported.
+2. Receive alerts when entry conditions become eligible or a setup becomes invalid.
+3. Review the proposed entry, stop-loss, targets and reward/risk.
+4. Record a simulated or manually executed trade.
+
+### Workflow D — Learn
+
+1. Replay historical candles against a saved scanner or strategy version.
+2. Compare outcomes across strategies and timeframes.
+3. Review win rate, expectancy, drawdown and costs.
+4. Adjust the configuration and evaluate the revised version without overwriting prior results.
+
+# 4. Platform and architecture
+
+## 4.1 Technology stack
+
+| Layer | Proposed technology |
+|---|---|
+| Language | TypeScript |
+| UI | React |
+| Build system | Vite |
+| Styling | Tailwind CSS |
+| Charting | TradingView Lightweight Charts |
+| Local database | IndexedDB with Dexie |
+| State management | Zustand |
+| Configuration validation | Zod |
+| Unit and component tests | Vitest |
+| End-to-end tests | Playwright |
+| Web installation | Progressive Web App |
+| Android packaging | Capacitor, if required |
+| Windows packaging | Tauri, if required |
+
+These choices are provisional until the market-data integration and cross-platform chart prototype have been validated.
+
+TradingView Lightweight Charts is an open-source, Apache 2.0-licensed chart library. Its required TradingView attribution must be included in the application. Documentation: https://tradingview.github.io/lightweight-charts/
+
+## 4.2 Logical architecture
+
+The application is divided into six layers:
+
+**Presentation**
+- Dashboard, watchlists, scanner builder, chart, news feed, alerts and journal.
+
+**Application services**
+- Scanner orchestration, watchlist management, alert evaluation, strategy selection and paper-trade lifecycle.
+
+**Domain engine**
+- Indicators, filters, rule evaluation, ranking, signal generation, risk calculations and backtesting.
+
+**Persistence**
+- IndexedDB repositories, database migrations, caching and local export/import.
+
+**Provider adapters**
+- Market-data API, streaming feed, historical data, instrument master, news API and official RSS feeds.
+
+**Platform adapters**
+- Secure credential storage, notifications, background execution and connection lifecycle management.
+
+Domain calculations must not depend on React components or a particular provider.
+
+## 4.3 Device independence
+
+Windows and Android are separate installations, each with its own local database, provider configuration and cached data.
+
+Neither device hosts an application server for the other.
+
+The application may communicate directly with external market-data and news services. Cross-device synchronization is not part of the MVP; export/import is the initial portability mechanism.
+
+A PWA alone may not provide the authentication, secure credential handling or background behaviour required by every provider. The architecture must therefore allow a native wrapper and native credential-storage integration without changing the domain engine.
+
+## 4.4 Market-data security constraint
+
+Provider credentials must not be embedded in the frontend bundle, committed to source control or included in exported configuration files.
+
+Where supported, credentials should be stored using platform-secure storage. However, local storage and native secure storage do not make an application secret impossible to extract from a client application.
+
+Before selecting an integration, verify the provider's authentication flow, CORS requirements, session renewal, WebSocket support, client-application restrictions and licensing terms.
+
+If a provider requires a confidential server-side secret or mandatory intermediary, either select a compliant native/direct-client integration or change providers. Do not silently introduce a local server that the Android installation depends on.
+
+# 5. Market-data strategy
+
+## 5.1 Initial provider: ICICI Direct Breeze
+
+The user already has an ICICI Direct account, making Breeze the first integration to evaluate.
+
+Official documentation:
+- https://api.icicidirect.com/breezeapi/documents/index.html
+- https://www.icicidirect.com/futures-and-options/api/breeze
+
+The published documentation describes historical market data, live streaming and WebSocket-based OHLC feeds. It documents limits of 100 API calls per minute and 5,000 per day, and a maximum of 2,000 scripts subscribed simultaneously for the relevant streaming service.
+
+**Important coverage limitation:** Breeze's official API reference currently states that BSE-listed securities and MCX securities are unavailable. Consequently, Breeze alone cannot satisfy the full NSE+BSE objective.
+
+The first integration milestone must verify:
+
+- Authentication and session renewal.
+- Live NSE equity feed availability.
+- Supported historical candle intervals and history depth.
+- Instrument-master mappings and symbol resolution.
+- Direct browser versus native-client compatibility.
+- Permitted local storage and display of returned data.
+- Reconnection behaviour and request limits.
+
+Breeze is the initial candidate, not an irreversible architectural dependency.
+
+## 5.2 Alternative provider
+
+FYERS is a candidate for a second integration. Its official documentation states that market-data APIs, quotes and historical data are available without API subscription fees to eligible FYERS users.
+
+References:
+- https://fyers.in/products/api
+- https://support.fyers.in/portal/en/kb/fyers-api-integrations/fyers-api/general
+
+Before adoption, verify the current account requirements, exchange coverage, subscription limits, historical-data constraints and terms governing use in this personal application.
+
+Do not assume that a free API guarantees unrestricted redistribution, permanent local retention or every requested exchange and timeframe.
+
+## 5.3 Provider-independent interface
+
+Define a common TypeScript contract, conceptually:
+
+- `getInstruments(filters)`
+- `getHistoricalCandles(instrument, interval, range)`
+- `getQuote(instrument)`
+- `subscribeQuotes(instruments, callbacks)`
+- `subscribeCandles(instruments, interval, callbacks)`
+- `connect()`
+- `disconnect()`
+- `getConnectionStatus()`
+
+The exact method signatures should be established during implementation.
+
+All provider responses must be normalized into a shared schema with consistent timestamps, numeric types, exchange identifiers, interval definitions and data-quality metadata.
+
+## 5.4 Candle and quote model
+
+Each candle contains:
+
+- Instrument identifier.
+- Exchange identifier.
+- Timeframe.
+- Start timestamp in a defined timezone convention.
+- Open, high, low, close and volume.
+- Source/provider identifier.
+- Finality status: forming or closed.
+- Data-quality and freshness metadata.
+
+Store timestamps consistently, preferably in UTC, and render using the appropriate Indian market timezone, Asia/Kolkata.
+
+A forming candle must be distinguishable from a closed candle. Closed-candle strategies should not emit final signals from incomplete candles unless explicitly configured to do so.
+
+## 5.5 Data acquisition and caching
+
+- Download instrument metadata and historical candles when required.
+- Cache history locally and request only missing ranges where supported.
+- Batch API requests and respect provider limits.
+- Subscribe to live data only for the active chart and prioritized watchlist candidates.
+- Deduplicate overlapping historical and streaming candle updates.
+- Track last successful update, last event time and connection status.
+- Avoid treating the last received price as current after a disconnection.
+- Resume safely after network loss or application restart.
+
+The app must show whether data is live, delayed, cached, stale or unavailable.
+
+# 6. Stock discovery and configurable scanners
+
+## 6.1 Scanner model
+
+Every scanner is a saved configuration evaluated by one shared engine. Presets are configurations, not separate implementations.
+
+Users can:
+- Select a built-in preset.
+- Edit a preset.
+- Duplicate it into a personal configuration.
+- Create a scanner from scratch.
+- Enable, disable, reorder and remove conditions.
+- Create nested AND/OR groups.
+- Save different configurations for different timeframes.
+- Set ranking preferences and thresholds.
+- Inspect the reason for every match and failure.
+- Export and import scanner configurations.
+
+Built-in presets remain intact when users edit copies.
+
+## 6.2 Initial presets
+
+### Breakout hunter
+- Price breaks a defined resistance level.
+- Relative volume confirms participation.
+- Trend filters are satisfied.
+- Minimum liquidity requirements pass.
+
+### Trend pullback
+- Established trend is present.
+- Price approaches a selected moving average or support zone.
+- Momentum recovery or price confirmation occurs.
+- Risk and invalidation levels can be defined.
+
+### Momentum leaders
+- Relative strength exceeds a configurable threshold.
+- Trend is positive.
+- Momentum and volume conditions qualify.
+- Ranking emphasizes relative strength and persistence.
+
+### Reversal candidates
+- An oversold or extended condition is detected.
+- A defined reversal confirmation occurs.
+- The scanner distinguishes potential reversals from confirmed setups.
+
+### Intraday VWAP momentum
+- Price reclaims or continues above VWAP.
+- Intraday volume and momentum conditions qualify.
+- Session and timeframe restrictions apply.
+
+### Positional trend
+- Higher-timeframe trend alignment.
+- Relative strength and price structure.
+- Configurable volatility and liquidity limits.
+
+### Quality at a reasonable price
+- Profitability and financial-quality filters.
+- Debt and earnings-consistency filters.
+- Valuation constraints.
+- Requires a separate fundamentals data source and must not be simulated from price data.
+
+All presets are hypotheses to validate, not assertions of profitability.
+
+## 6.3 Custom condition builder
+
+The rule editor supports:
+
+- Indicators: RSI, MACD, EMA, SMA, ATR and VWAP where the timeframe supports it.
+- Price and volume: close, percentage change, gap, relative volume and traded value.
+- Comparisons: above, below, equals, crosses above, crosses below and percentage-distance conditions.
+- Lookback conditions: highest high, lowest low, prior close and rolling averages.
+- Relative comparisons: price relative to a moving average or a stock relative to a benchmark.
+- Fundamentals: P/E, P/B, debt ratios, revenue growth and other fields only when a source supplies valid data.
+- Universe filters: exchange, sector, price range, liquidity, market capitalization and instrument type where available.
+
+A rule has a field, operator, parameter(s), timeframe, lookback and validation metadata.
+
+Rules must have typed parameters. Invalid combinations—for example, comparing a price field to an RSI value without an explicitly supported operation—must be rejected.
+
+## 6.4 Logical evaluation
+
+Conditions support nested groups, such as:
+
+`ALL: [trend condition, liquidity condition, ANY: [breakout condition, pullback condition]]`
+
+The engine must define how missing data is handled. Missing values must not silently pass a rule.
+
+Each evaluation should return:
+- Overall match status.
+- Individual condition results.
+- Actual values and thresholds.
+- Missing-data and quality warnings.
+- Evaluation timestamp and data freshness.
+- Scanner configuration version.
+
+## 6.5 Ranking and scoring
+
+Filtering and ranking are separate operations.
+
+A candidate may qualify without ranking highly. A ranking score may combine trend alignment, relative strength, volume confirmation and setup quality, but each factor must be visible and configurable.
+
+Do not label an arbitrary score as a probability of profit.
+
+Stock quality and trade setup quality are separate concepts:
+- Stock quality evaluates whether the company or instrument merits research.
+- Setup quality evaluates whether the current market conditions satisfy a strategy.
+
+A technically attractive setup does not imply that a company is fundamentally attractive, and vice versa.
+
+## 6.6 Scanner scheduling
+
+- Manual scan on demand.
+- Scheduled scans where supported by the active platform.
+- Refresh after new closed candles.
+- Live monitoring only for prioritized candidates.
+- Duplicate suppression for unchanged results.
+- Configurable alerts when a stock first qualifies, materially changes rank or ceases to qualify.
+
+On Android, background execution is opportunistic and OS-dependent. The product must not promise uninterrupted monitoring while the app is suspended.
+
+# 7. Charting and technical indicators
+
+## 7.1 Chart requirements
+
+- Candlestick and line charts.
+- Timeframes supported by the selected data provider.
+- Zoom, pan, crosshair and time-range selection.
+- Volume panel.
+- Configurable indicator overlays.
+- Horizontal support/resistance levels.
+- Entry zone, stop-loss and target overlays.
+- Signal markers and explanatory tooltips.
+- Live updates without recreating the entire chart.
+- Clear labels for data source, timestamp and freshness.
+
+## 7.2 Initial indicators
+
+- SMA and EMA.
+- RSI.
+- MACD.
+- ATR.
+- VWAP for appropriate intraday use.
+- Relative volume.
+- Rolling highs/lows and percentage returns.
+- Relative strength versus a selected benchmark.
+
+Indicator calculations should be implemented or wrapped in a consistent, tested domain module. Define warm-up periods, missing values and timeframe behaviour explicitly.
+
+# 8. Signal engine and trade planning
+
+## 8.1 Strategy architecture
+
+Each strategy implements a shared contract:
+
+- Strategy identifier and version.
+- Parameters and validation.
+- Required data and timeframe.
+- Indicator dependencies.
+- Setup evaluation.
+- Entry conditions.
+- Stop-loss and target calculations.
+- Invalidation and expiry conditions.
+- Human-readable explanation.
+
+The engine evaluates strategies independently of the UI and data provider.
+
+## 8.2 Initial strategies
+
+### Swing breakout
+A close above a defined resistance level, supported by relative volume and a configurable trend filter.
+
+### Trend pullback
+An established trend with a pullback toward support or a moving average and a subsequent confirmation.
+
+### Intraday VWAP momentum
+A qualifying VWAP reclaim or continuation with session, volume and momentum conditions.
+
+These are initial strategies for validation. Additional strategies can be introduced through configuration and independently tested modules.
+
+## 8.3 Signal lifecycle
+
+Possible states:
+
+- Watching.
+- Setup forming.
+- Entry eligible.
+- Active or awaiting simulated entry.
+- Target reached.
+- Stop-loss reached.
+- Invalidated.
+- Expired.
+- Missed entry.
+- Outcome ambiguous.
+
+State transitions must be explicit and auditable. Repeated ticks must not create repeated entry events.
+
+## 8.4 Entry, stop-loss and targets
+
+A setup contains:
+- Entry price or range.
+- Stop-loss / invalidation level.
+- One or more targets.
+- Planned risk per share.
+- Reward/risk ratio.
+- Strategy score and explanation.
+- Creation, update and expiry timestamps.
+
+For a long trade:
+
+`Risk per share = Entry − Stop`
+
+`Target = Entry + (Risk per share × Reward/Risk multiple)`
+
+For a short setup, reverse the directional calculations. The initial product may focus on long equity trades until short-selling constraints and instrument semantics are explicitly modelled.
+
+Target selection may use prior resistance, structure, reward/risk multiples or a configured trailing-stop rule.
+
+Stop-losses are not guaranteed execution prices. Gaps and illiquidity may result in materially different exits.
+
+## 8.5 Risk management
+
+Position sizing must be a separate function:
+
+`Shares = floor(Risk budget / Risk per share)`
+
+Final quantity is constrained by available capital, liquidity, instrument rules and estimated costs.
+
+The UI must distinguish theoretical risk from actual risk, and gross returns from returns after charges and slippage.
+
+## 8.6 Confidence and explainability
+
+The initial engine uses a setup score rather than an uncalibrated probability of success.
+
+Every score should show its contributing factors, weights and rule outcomes. Hard safety/data-quality gates override the score.
+
+Historical performance statistics may be shown only with their sample size, test period, costs and methodology.
+
+## 8.7 Non-repainting requirements
+
+- Closed-candle signals are calculated from completed bars.
+- Strategy configuration changes create new versions.
+- Historical signals retain their original rule version and inputs.
+- Intrabar provisional signals are labelled provisional.
+- Backtests must not use information unavailable at the simulated decision time.
+
+# 9. News and corporate disclosures
+
+## 9.1 Objectives
+
+The news subsystem supports:
+- Stock-linked reporting.
+- Official corporate announcements.
+- Financial results and board meetings.
+- Corporate actions.
+- Regulatory and macroeconomic developments.
+- Alerts for material events affecting shortlisted stocks.
+- Source links from news items to stock pages and charts.
+
+News must provide context, not directly trigger a buy/sell recommendation.
+
+## 9.2 Source inventory
+
+### NSE India — primary disclosure source
+Official RSS directory:
+https://www.nseindia.com/static/rss-feed
+
+NSE lists feeds covering announcements, financial results, board meetings, corporate actions, shareholding patterns, insider trading disclosures and circulars.
+
+Use these feeds as a primary source for available official NSE updates. Verify feed behaviour, update latency and terms during implementation.
+
+### BSE India — primary disclosure source
+Corporate filings:
+https://www.bseindia.com/corporates.html
+
+Market-data portal:
+https://marketdata.bseindia.com/
+
+Validate feed/API access, authentication, pricing and licensing before committing to a production connector.
+
+### SEBI — regulatory source
+https://www.sebi.gov.in/
+
+Use official releases and regulatory updates for enforcement actions, investor warnings, consultations and market-wide developments.
+
+### RBI — macroeconomic source
+https://www.rbi.org.in/
+
+Use official monetary policy, banking regulation and financial-stability updates. Verify current feed/API availability and reuse terms.
+
+### Marketaux — news API candidate
+Pricing:
+https://www.marketaux.com/pricing
+
+Documentation:
+https://www.marketaux.com/documentation
+
+Its published free plan offers 100 requests per day and up to three articles per news request. The API supports financial news and entity filtering across markets. Validate Indian-equity coverage, ticker matching, freshness and storage rights before using it as a primary news source.
+
+### FYERS — future market-data alternative
+https://fyers.in/products/api
+
+Evaluate it for additional exchange coverage if Breeze cannot satisfy the full market-universe requirement.
+
+### General news APIs and publisher feeds
+NewsData.io, GDELT, Economic Times, Mint and Moneycontrol may be evaluated as optional sources.
+
+Each must be reviewed for:
+- Current availability and pricing.
+- Actual Indian stock coverage.
+- Update latency and historical access.
+- CORS and authentication behaviour.
+- Content reuse and retention rights.
+- Production-use restrictions.
+
+Free development access must not be assumed to permit production usage.
+
+## 9.3 News connector interface
+
+Each connector should expose a normalized feed of article metadata with:
+- Source identifier.
+- Headline and original URL.
+- Publication and first-seen timestamps.
+- Matched entities and confidence.
+- Article category.
+- Official/editorial classification.
+- Optional excerpt or sentiment fields where licensed.
+- Content-retention restrictions.
+
+Prefer metadata and links over copying full article content. Display attribution and open the original publisher page.
+
+## 9.4 Entity matching and deduplication
+
+Match stories using exchange instrument identifiers, official company names, supported tickers and aliases.
+
+A ticker alone is not sufficient evidence of a match; common words and ticker collisions must be handled.
+
+Deduplicate using canonical URL, provider identifiers and normalized headline/time fingerprints. Keep source attribution even when duplicate reports are merged.
+
+## 9.5 News categories and importance
+
+Suggested categories:
+- Financial results.
+- Earnings guidance.
+- Corporate orders and contracts.
+- Mergers, acquisitions and restructuring.
+- Management changes.
+- Regulatory or legal actions.
+- Corporate governance.
+- Corporate actions.
+- Macro and sector news.
+- Market commentary and opinion.
+
+Importance must be explainable and distinct from sentiment. An official filing may be highly material without being inherently bullish or bearish.
+
+Sentiment analysis is optional and must not be treated as a trading signal by itself.
+
+# 10. Data persistence
+
+Use IndexedDB through Dexie for structured local data.
+
+Recommended entities:
+
+| Entity | Purpose |
+|---|---|
+| Instruments | Exchange, symbol, provider IDs, tick size, lot size |
+| Watchlists | User-created stock lists |
+| Watchlist items | Stock membership and ordering |
+| Candles | Cached OHLCV data by instrument/timeframe |
+| Quotes | Latest known quote and freshness metadata |
+| Scanner configs | Presets, custom rules and versions |
+| Scan runs | Timestamp, universe and evaluation summary |
+| Scan results | Matched candidates and condition explanations |
+| Signals | Setup state, entry, stop, targets and score |
+| Signal events | State transitions and alert history |
+| News items | Metadata, links, source and entity matches |
+| Paper trades | Simulated entries, exits, costs and outcomes |
+| App settings | Preferences, risk limits and provider settings |
+
+Use stable internal instrument IDs and provider-specific identifier mappings. The same company listed on NSE and BSE must not be treated as the same tradable instrument.
+
+Database migrations must be versioned and tested. Candle storage requires retention limits and pruning policies; journal and signal-history records should be retained separately.
+
+Export/import should support user data and scanner configurations without accidentally exporting secrets.
+
+# 11. Alerts and notifications
+
+Initial alert types:
+- Stock enters or leaves a scanner's result set.
+- Setup becomes entry eligible.
+- Price approaches an entry zone.
+- Stop-loss or target level is reached.
+- Setup becomes invalid or expires.
+- A new relevant corporate disclosure is detected.
+- A connection or data-quality issue prevents reliable evaluation.
+
+Implement deduplication, cooldowns and explicit alert state.
+
+In-app alerts are the first priority. OS notifications depend on platform permissions, app lifecycle and scheduling constraints. No always-on Android monitoring guarantee should be made without a proven implementation.
+
+# 12. Backtesting and paper trading
+
+Backtesting is required before signals are presented as validated strategies.
+
+The engine must:
+- Evaluate rules using historical data available at each simulated point in time.
+- Avoid look-ahead and survivorship bias where the necessary data is available.
+- Include brokerage, applicable taxes/fees and configurable slippage.
+- Model price gaps and stop execution limitations.
+- Handle missing candles and corporate actions carefully.
+- Use chronological in-sample and out-of-sample evaluation.
+- Avoid tuning repeatedly on the same test period without disclosure.
+
+If a candle crosses both stop and target and intrabar ordering cannot be determined, classify the outcome conservatively or as ambiguous rather than automatically selecting the profitable outcome.
+
+Track:
+- Number of trades.
+- Win rate.
+- Average win and average loss.
+- Expectancy.
+- Profit factor.
+- Maximum drawdown.
+- Exposure and holding period.
+- Costs and net return.
+- Results by strategy, timeframe and market regime.
+
+Paper trades must be clearly labelled simulated. Live trading execution remains out of scope.
+
+# 13. Security, privacy and licensing
+
+- No mandatory application backend.
+- No embedded secrets in client bundles or source control.
+- Platform-secure credential storage where supported.
+- Provider authentication and session renewal must follow documented requirements.
+- No exchange-site scraping to bypass authentication or access restrictions.
+- Local database export must exclude credentials by default.
+- External links must identify their source.
+- News content must be stored only as permitted by its licence.
+- Market-data display, caching and historical analysis must comply with the selected provider's terms.
+- Add clear disclaimers that signals are informational and trading involves loss risk.
+
+Before public distribution or paid recommendations, review applicable Indian securities regulations and provider terms with qualified professionals.
+
+# 14. UI and navigation
+
+Primary navigation:
+
+1. **Dashboard** — market status, watchlist changes, active alerts and recent setups.
+2. **Discover** — preset library, custom scanner builder, filters and ranked results.
+3. **Shortlist** — saved candidates grouped by research status.
+4. **Charts** — interactive chart, indicators, strategy overlays and news.
+5. **Journal** — paper trades, manual trade records and performance analytics.
+6. **News** — official disclosures, company news and market-wide events.
+7. **Settings** — provider connections, data freshness, risk limits, backup and preferences.
+
+Desktop layouts should prioritize dense tables and multi-panel charts. Mobile layouts should prioritize compact candidate cards, a readable chart and a clear trade-plan summary.
+
+The interface must never make mock or stale data appear to be live.
+
+# 15. Implementation milestones
+
+## Milestone 0 — Feasibility prototypes
+- Test Lightweight Charts on desktop and Android.
+- Validate PWA installation and local storage.
+- Test Breeze authentication, direct-client compatibility and live NSE streaming.
+- Confirm market-data usage terms.
+- Evaluate BSE coverage alternatives.
+- Validate one official disclosure feed and one news API.
+
+**Exit criterion:** a documented, technically and legally viable data path, with no Android dependency on the Windows machine.
+
+## Milestone 1 — Local application foundation
+- React/Vite application shell.
+- Responsive navigation.
+- IndexedDB schema and migrations.
+- Instrument model and mock data adapter.
+- Watchlists and shortlist management.
+
+## Milestone 2 — Scanner engine
+- Typed rule model.
+- Editable presets and custom rule builder.
+- Nested logical groups.
+- Condition explanations and ranking.
+- Unit tests and historical candle fixtures.
+
+## Milestone 3 — Charts and signals
+- Candlestick charts.
+- Indicators and overlays.
+- Entry, stop and target levels.
+- Signal lifecycle and alert history.
+- Data-freshness handling.
+
+## Milestone 4 — Market-data integration
+- Breeze adapter.
+- Historical candle loading and caching.
+- Live updates and reconnection.
+- Instrument mapping.
+- Session expiry and error handling.
+
+## Milestone 5 — News and alerts
+- NSE disclosure feed.
+- BSE source evaluation/integration.
+- SEBI/RBI updates.
+- Marketaux proof of concept.
+- Entity matching, deduplication and notifications.
+
+## Milestone 6 — Validation and packaging
+- Backtesting.
+- Paper trading.
+- Performance analytics.
+- Export/import and recovery.
+- Windows/Android installation and lifecycle tests.
+- Security and licensing review.
+
+# 16. Acceptance criteria for the MVP
+
+The MVP is acceptable when:
+
+1. Users can create, edit, duplicate and delete scanner presets.
+2. Custom scanners support typed conditions and nested AND/OR logic.
+3. Scanner results explain each condition's outcome.
+4. The app distinguishes stock-quality ranking from trade-setup scoring.
+5. Charts display correct candles and indicator values for tested fixtures.
+6. Entry, stop and target calculations are deterministic and test-covered.
+7. Cached research and scanner configurations remain available offline.
+8. The Android installation does not depend on a server running on the user's PC.
+9. Live data failures and stale data are clearly visible.
+10. News items link to original sources and identify their source type.
+11. Historical tests do not silently assume favourable outcomes for ambiguous candles.
+12. Paper-trading results include costs and preserve the strategy version used.
+13. No automatic order placement is possible in the MVP.
+14. Credentials and data retention follow the selected provider's documented requirements.
+
+# 17. Open decisions and risks
+
+The following must remain explicit until validated:
+
+| Question | Current position |
+|---|---|
+| Market-data provider | Breeze first; alternative provider if necessary |
+| BSE live coverage | Not provided by Breeze; separate compliant source required |
+| Browser-only Breeze access | Unproven; prototype required |
+| Secure credential handling | Platform-specific solution required |
+| Android background monitoring | Best effort; must not be promised as uninterrupted |
+| News API | Marketaux free tier for evaluation |
+| Official BSE feeds | Endpoint, terms and access requirements to validate |
+| Fundamentals provider | Not selected |
+| Cross-device sync | Excluded from MVP; export/import first |
+| Chart packaging | PWA first; Capacitor/Tauri if needed |
+| Strategy profitability | Unproven until backtested and evaluated out of sample |
+| Public distribution | Requires separate licensing and regulatory review |
+
+# 18. Reference links
+
+**Market data**
+- ICICI Direct Breeze documentation: https://api.icicidirect.com/breezeapi/documents/index.html
+- ICICI Direct Breeze product page: https://www.icicidirect.com/futures-and-options/api/breeze
+- FYERS API: https://fyers.in/products/api
+- FYERS API support: https://support.fyers.in/portal/en/kb/fyers-api-integrations/fyers-api/general
+
+**News and official disclosures**
+- NSE RSS feeds: https://www.nseindia.com/static/rss-feed
+- BSE corporate filings: https://www.bseindia.com/corporates.html
+- BSE market-data portal: https://marketdata.bseindia.com/
+- SEBI: https://www.sebi.gov.in/
+- RBI: https://www.rbi.org.in/
+- Marketaux pricing: https://www.marketaux.com/pricing
+- Marketaux documentation: https://www.marketaux.com/documentation
+- GDELT resources: https://gdeltproject.org/data.html
+
+**Technical foundations**
+- TradingView Lightweight Charts: https://www.tradingview.com/lightweight-charts/
+- Lightweight Charts documentation: https://tradingview.github.io/lightweight-charts/
+
+---
+
+## Final recommendation
+
+Proceed with a TypeScript/React/Vite local-first application, IndexedDB persistence and a provider-independent domain engine. Build the configurable scanner before expanding into advanced news analysis or multiple strategies.
+
+The first implementation priority is not a sophisticated prediction model. It is proving that the application can safely acquire reliable market data, calculate repeatable indicators, evaluate transparent scanner rules and display honest trade plans on both Windows and Android—without a user-maintained server.
+
+Once those foundations are validated, the remaining features can be added incrementally without locking the product into a single provider or strategy.

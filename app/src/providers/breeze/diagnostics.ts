@@ -1,0 +1,69 @@
+import { BREEZE_CODES } from './codes'
+import { BreezeClient } from './client'
+import { BreezeStream } from './stream'
+import { helperAvailable, type BreezeSession } from './session'
+import { UNIVERSE } from '../universe'
+import { istDate } from '../../domain/time'
+import { ProviderError } from '../errors'
+
+export interface DiagStep {
+  label: string
+  status: 'ok' | 'fail' | 'info'
+  detail: string
+}
+
+const wait = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+
+/**
+ * Walks the Breeze path one stage at a time and reports each, so a failure points at the broken layer
+ * (helper, session, history, symbol map, live feed) instead of showing a blank dashboard.
+ */
+export async function runBreezeDiagnostics(session: BreezeSession | null, onUpdate: (steps: DiagStep[]) => void): Promise<DiagStep[]> {
+  const steps: DiagStep[] = []
+  const push = (s: DiagStep) => { steps.push(s); onUpdate([...steps]) }
+
+  const helper = await helperAvailable()
+  push({ label: 'Local helper', status: helper ? 'ok' : 'fail', detail: helper ? 'Reachable. Breeze calls are relayed through your dev server.' : 'Not reachable. Run the app with npm run dev (or npm run preview); installed or hosted copies cannot use Breeze.' })
+  if (!helper) return steps
+
+  if (!session) { push({ label: 'Session', status: 'fail', detail: 'Not logged in. Log in with ICICI, or paste a session code, first.' }); return steps }
+  const left = session.expiresAt - Date.now()
+  push({ label: 'Session', status: left > 0 ? 'ok' : 'fail', detail: left > 0 ? `Logged in as ${session.userId}. Assumed valid for about ${Math.round(left / 3.6e6)} h.` : 'The stored session has passed its assumed expiry. Log in again.' })
+
+  const mapped = UNIVERSE.filter(i => BREEZE_CODES[i.symbol]).length
+  push({ label: 'Symbol map', status: mapped === UNIVERSE.length ? 'ok' : 'fail', detail: `${mapped} of ${UNIVERSE.length} tracked stocks have a Breeze code.` })
+
+  try {
+    const now = Date.now()
+    const rows = await new BreezeClient(() => session).history({
+      interval: '1day', stock_code: BREEZE_CODES.RELIANCE.code, exch_code: 'NSE', product_type: 'cash',
+      from_date: `${istDate(now - 14 * 86_400_000)}T00:00:00.000Z`, to_date: `${istDate(now)}T23:59:59.000Z`,
+    })
+    const last = rows[rows.length - 1]
+    push({
+      label: 'Daily history (RELIANCE)', status: rows.length ? 'ok' : 'info',
+      detail: rows.length ? `${rows.length} daily bars. Latest: ${last.datetime} close ${last.close}.` : 'Request succeeded but returned no bars for the last 14 days.',
+    })
+  } catch (e) {
+    push({ label: 'Daily history (RELIANCE)', status: 'fail', detail: e instanceof ProviderError ? e.message : String(e) })
+    return steps
+  }
+
+  const stream = new BreezeStream(session, UNIVERSE.slice(0, 5))
+  try {
+    stream.start()
+    for (let i = 0; i < 12 && stream.state === 'connecting'; i++) await wait(500)
+    if (stream.state !== 'connected') {
+      push({ label: 'Live feed', status: 'fail', detail: stream.message ?? 'Could not connect within 6 seconds. Browsers cannot send the User-Agent header the official client uses, which Breeze may require.' })
+    } else {
+      await wait(4000)
+      push({
+        label: 'Live feed', status: 'ok',
+        detail: stream.ticksReceived ? `Connected and received ${stream.ticksReceived} ticks.` : 'Connected. No ticks yet, which is expected when the market is closed.',
+      })
+    }
+  } finally {
+    stream.stop()
+  }
+  return steps
+}

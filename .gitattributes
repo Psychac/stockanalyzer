@@ -1,0 +1,13 @@
+# Normalise line endings so Windows and Android/Linux tooling see the same files.
+* text=auto
+
+# The design spec has no extension; treat it as text.
+specs text
+
+# Never diff or convert these.
+*.png binary
+*.ico binary
+*.zip binary
+
+# Lockfile diffs are noise in reviews.
+package-lock.json -diff

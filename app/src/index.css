@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #080c14;
+  --color-panel: #0f1624;
+  --color-panel2: #151e30;
+  --color-line: #202c44;
+  --color-ink: #e8edf7;
+  --color-mute: #8593ae;
+  --color-up: #2dd48a;
+  --color-down: #ff5c7a;
+  --color-accent: #4cc2ff;
+  --color-warn: #f5b84a;
+  --font-sans: Inter, "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: radial-gradient(1200px 600px at 80% -10%, rgba(76, 194, 255, 0.07), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(45, 212, 138, 0.05), transparent 60%), var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+::selection { background: rgba(76, 194, 255, 0.3); }
+* { scrollbar-width: thin; scrollbar-color: #26324d transparent; }
+
+.num { font-variant-numeric: tabular-nums; }
+
+@layer components {
+  .card { @apply min-w-0 rounded-2xl border border-line/80 bg-panel/80 backdrop-blur; box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 30px rgba(0,0,0,0.25); }
+  .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-xl border border-line bg-panel2 px-3.5 py-2 text-sm font-medium text-ink transition hover:border-accent/60 hover:bg-panel2/70 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40; }
+  .btn-primary { @apply border-transparent bg-gradient-to-br from-accent to-up text-[#04121c] hover:brightness-110 hover:border-transparent; }
+  .btn-ghost { @apply border-transparent bg-transparent hover:bg-panel2; }
+  .btn-sm { @apply px-2.5 py-1.5 text-xs rounded-lg; }
+  .chip { @apply inline-flex items-center gap-1 rounded-full border border-line bg-panel2 px-2.5 py-0.5 text-xs text-mute; }
+  .field { @apply w-full rounded-lg border border-line bg-bg/60 px-2.5 py-1.5 text-sm text-ink outline-none transition focus:border-accent/70; }
+  .label { @apply text-[11px] font-medium uppercase tracking-wider text-mute; }
+}
+
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.rise { animation: rise 0.35s ease both; }
+@keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+.skeleton { background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent) 0 0 / 200% 100%, var(--color-panel2); animation: shimmer 1.4s infinite linear; border-radius: 0.75rem; }
+
+.safe-b { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
