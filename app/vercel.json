@@ -1,7 +1,23 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["bom1"],
+  "regions": [
+    "bom1"
+  ],
   "functions": {
-    "api/breeze/*.ts": { "maxDuration": 10 }
-  }
+    "api/breeze/*.ts": {
+      "maxDuration": 10
+    },
+    "api/data/ingest.ts": {
+      "maxDuration": 300
+    },
+    "api/data/manifest.ts": {
+      "maxDuration": 10
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/data/ingest",
+      "schedule": "30 14 * * *"
+    }
+  ]
 }

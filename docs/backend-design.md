@@ -1,6 +1,6 @@
 # Shared backend: market-wide data (design)
 
-Status: designed, not built. Only the reachability probe (`api/data/probe.ts`) exists.
+Status: stage 1 built (ingest, storage, endpoints, tests). Not yet built: the client that downloads the files, and the market-wide scanner.
 Spec basis: §4.5. Facts below were read from Vercel's docs on 2026-10-28 and from live requests made from a developer PC
 (not from Vercel's network; the probe exists to close that gap).
 
@@ -52,3 +52,29 @@ per user. Sites like Chartink avoid this by ingesting bulk data once on a server
 - Exchange terms on redistributing data. Fine for personal use; review before sharing the deployment.
 - Live BSE prices are still unsolved (Breeze has no BSE; Upstox live needs a login).
 - Exchange holidays: a missing file is expected, not an error.
+
+## Stage 1 as built (2026-10-28)
+
+Code: `app/api/_lib/data/` (parse, history, ingest, store), endpoints `api/data/ingest.ts` (cron and manual backfill) and
+`api/data/manifest.ts` (public). Reachability from a Vercel (Mumbai) deployment was confirmed for NSE, BSE and Upstox before building.
+
+Measured against the live exchange files:
+
+- Ingest speed: about 1.4 s per trading day, so a one-year backfill is about 6 minutes: two or three runs of the 240 s budget.
+  It resumes where it stopped.
+- BSE answers a day with no file (holiday, weekend) with HTTP 200 and an HTML page, not 404. Handled.
+- Without filtering, 9,693 stocks (2,952 NSE, 6,741 BSE) and about 28 MB gzipped for a year. With the liquidity rule (admit at
+  Rs 50 lakh turnover in a day, keep at Rs 25 lakh average) it is roughly 2,000 to 2,500 stocks per exchange and a few MB each.
+  Files are split per exchange so a device downloads only what it uses.
+- Ten indices are published from Upstox, including Sensex, BSE 500 and Bankex, about 270 daily bars each.
+- Writes: a normal day is 4 uploads (two deltas, indices, manifest); a catch-up or a week of deltas folds into new snapshots.
+  Roughly 40 to 60 uploads a month against the 2,000 limit.
+
+Setup on Vercel:
+
+1. Project, Storage, create a **Blob** store (public) and connect it. That adds `BLOB_READ_WRITE_TOKEN`.
+2. Add an environment variable `CRON_SECRET` (any long random string). Vercel sends it to the cron as a bearer token; the endpoint
+   refuses to run without it.
+3. Backfill once: `curl -H "Authorization: Bearer <CRON_SECRET>" https://<deployment>/api/data/ingest`, repeating while the
+   response has `"stopped": "time budget reached; run again to continue"`.
+4. The cron then runs daily at 14:30 UTC (20:00 IST, within Vercel's one-hour window on Hobby).
