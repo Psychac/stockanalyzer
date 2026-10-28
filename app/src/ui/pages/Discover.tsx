@@ -85,12 +85,20 @@ export function Discover() {
   const instruments = useApp(s => s.instruments)
   const benchmark = useApp(s => s.benchmark)
   const run = useApp(s => s.run)
+  const runMarketScan = useApp(s => s.runMarketScan)
+  const market = useApp(s => s.market)
+  const scan = useApp(s => s.scan)
   const save = useApp(s => s.saveScanner)
   const del = useApp(s => s.deleteScanner)
   const scanners = useMemo(() => allScanners(user), [user])
   const [selId, setSelId] = useState(PRESETS[0].id)
   const [editing, setEditing] = useState<{ cfg: ScannerConfig; isNew: boolean } | null>(null)
   const [showAll, setShowAll] = useState(false)
+  const [universe, setUniverse] = useState<Universe>(() => {
+    try { const v = localStorage.getItem('scanUniverse'); return v === 'NSE' || v === 'BSE' || v === 'ALL' ? v : 'tracked' } catch { return 'tracked' }
+  })
+  const [limit, setLimit] = useState(100)
+  const pickUniverse = (u: Universe) => { setUniverse(u); try { localStorage.setItem('scanUniverse', u) } catch { /* not persisted */ } }
   const [note, setNote] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const resultsRef = useRef<HTMLElement>(null)
@@ -100,11 +108,16 @@ export function Discover() {
   const stale = lastRun && lastRun.scannerVersion !== sel.version
   const sectors = useMemo(() => [...new Set(instruments.map(i => i.sector))].sort(), [instruments])
   const matches = lastRun?.results.filter(r => r.matched) ?? []
-  const shown = showAll ? lastRun?.results ?? [] : matches
+  const shown = lastRun?.matchesOnly || !showAll ? matches : lastRun?.results ?? []
+  const visible = shown.slice(0, limit)
   const blocked = sel.requires ? REQUIRES_LABEL[sel.requires] : null
 
+  const marketScan = universe !== 'tracked'
+  const scanning = !!scan || market.status === 'loading'
   const onRun = () => {
-    run(sel)
+    setLimit(100)
+    if (marketScan) void runMarketScan(sel, universe)
+    else run(sel)
     // On a phone the results sit below the fold; bring them into view.
     if (window.innerWidth < 1024) setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
   }
@@ -134,7 +147,7 @@ export function Discover() {
       <PageHeader
         title="Discover"
         subtitle="Scanners are saved configurations run by one shared engine. Built-in presets stay intact; edit a copy."
-        actions={<><DataBadge set={benchmark} /><button className="btn btn-primary" onClick={() => setEditing({ cfg: blankScanner(), isNew: true })}>+ New scanner</button></>}
+        actions={<>{universe !== 'tracked' ? <span className="chip border-accent/40 text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent" />EOD · SHARED DATA</span> : <DataBadge set={benchmark} />}<button className="btn btn-primary" onClick={() => setEditing({ cfg: blankScanner(), isNew: true })}>+ New scanner</button></>}
       />
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
         <div className="lg:hidden">
@@ -188,7 +201,7 @@ export function Discover() {
                 <p className="mt-1 max-w-xl text-sm text-mute">{sel.description}</p>
               </div>
               <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-                <button className="btn btn-primary order-first w-full !py-2.5 sm:order-last sm:w-auto sm:!py-2" disabled={!!blocked || status !== 'ready'} onClick={onRun}>{lastRun ? 'Re-run scan' : 'Run scan'}</button>
+                <button className="btn btn-primary order-first w-full !py-2.5 sm:order-last sm:w-auto sm:!py-2" disabled={!!blocked || scanning || (!marketScan && status !== 'ready')} onClick={onRun}>{scanning ? 'Scanning…' : lastRun ? 'Re-run scan' : 'Run scan'}</button>
                 <button className="btn btn-sm sm:!px-3.5 sm:!py-2 sm:!text-sm" onClick={edit}>{isPreset(sel.id) ? 'Customize copy' : 'Edit'}</button>
                 {!isPreset(sel.id) && <>
                   <button className="btn btn-sm sm:!px-3.5 sm:!py-2 sm:!text-sm" onClick={() => void save(duplicateScanner(sel)).then(() => setNote('Duplicated.'))}>Duplicate</button>
@@ -204,22 +217,28 @@ export function Discover() {
                 Universe: NSE · {sel.universe.minPrice !== null && `price ≥ ₹${sel.universe.minPrice} · `}{sel.universe.minAvgTradedValueCr !== null && `traded ≥ ₹${sel.universe.minAvgTradedValueCr} Cr/day · `}{sel.universe.sectors.length ? sel.universe.sectors.join(', ') : 'all sectors'}
               </p>
             </details>
+            <UniversePicker universe={universe} onPick={pickUniverse} />
+            {marketScan && <MarketNote />}
             {blocked && <p className="mt-3 rounded-lg border border-warn/30 bg-warn/5 p-2.5 text-xs text-warn">{blocked}. This preset is shown for completeness and cannot run on the demo data source.</p>}
           </section>
 
-          {!lastRun && !blocked && <Empty icon="⌕" title="Run this scanner">Evaluates {instruments.length} NSE stocks against the rules on the latest closed candle.</Empty>}
+          {!lastRun && !blocked && !scanning && <Empty icon="⌕" title="Run this scanner">{marketScan ? 'Evaluates every liquid stock in the selected exchange(s) on the latest end-of-day close.' : `Evaluates ${instruments.length} tracked stocks against the rules on the latest candle.`}</Empty>}
+          {scanning && <ScanProgress />}
 
           {lastRun && (
             <section ref={resultsRef} className="card scroll-mt-4 overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 px-4 py-3">
                 <div>
-                  <div className="font-semibold">{matches.length} match{matches.length === 1 ? '' : 'es'} <span className="font-normal text-mute">of {lastRun.universeSize}</span></div>
-                  <div className="text-[11px] text-mute">Ran {dateTime(lastRun.ranAt)} · config v{lastRun.scannerVersion} · {lastRun.source === 'demo' ? 'demo data' : 'live data'}{stale && <span className="ml-1 text-warn">· scanner changed since this run, re-run</span>}</div>
+                  <div className="font-semibold">{matches.length} match{matches.length === 1 ? '' : 'es'} <span className="font-normal text-mute">of {lastRun.universeSize}{lastRun.universe ? ` · ${lastRun.universe}` : ''}</span></div>
+                  <div className="text-[11px] text-mute">Ran {dateTime(lastRun.ranAt)} · config v{lastRun.scannerVersion} · {lastRun.source === 'demo' ? 'demo data' : lastRun.source === 'market' ? 'end-of-day data' : 'live data'}{stale && <span className="ml-1 text-warn">· scanner changed since this run, re-run</span>}</div>
                 </div>
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-mute"><input type="checkbox" className="accent-[var(--color-accent)]" checked={showAll} onChange={e => setShowAll(e.target.checked)} />Show non-matches</label>
+                {!lastRun.matchesOnly && <label className="flex cursor-pointer items-center gap-2 text-xs text-mute"><input type="checkbox" className="accent-[var(--color-accent)]" checked={showAll} onChange={e => setShowAll(e.target.checked)} />Show non-matches</label>}
               </div>
               {shown.length === 0 ? <p className="px-4 py-10 text-center text-sm text-mute">No stocks match right now. Loosen a condition or show non-matches to see which rule failed.</p> : (
-                <ul>{shown.map(r => <ResultRow key={r.instrumentId} r={r} source={sel.name} />)}</ul>
+                <>
+                  <ul>{visible.map(r => <ResultRow key={r.instrumentId} r={r} source={sel.name} />)}</ul>
+                  {shown.length > visible.length && <div className="border-t border-line/60 p-3 text-center"><button className="btn btn-sm" onClick={() => setLimit(limit + 100)}>Show {Math.min(100, shown.length - visible.length)} more ({shown.length - visible.length} left, best scores first)</button></div>}
+                </>
               )}
             </section>
           )}
@@ -230,5 +249,60 @@ export function Discover() {
 
       {editing && <ScannerBuilder initial={editing.cfg} isNew={editing.isNew} sectors={sectors} onSave={cfg => void onSave(cfg)} onCancel={() => setEditing(null)} />}
     </>
+  )
+}
+
+type Universe = 'tracked' | 'NSE' | 'BSE' | 'ALL'
+
+function UniversePicker({ universe, onPick }: { universe: Universe; onPick: (u: Universe) => void }) {
+  const counts = useApp(s => s.market.counts)
+  const opts: { key: Universe; label: string; hint?: string }[] = [
+    { key: 'tracked', label: 'Tracked 50', hint: 'live source' },
+    { key: 'NSE', label: 'All NSE', hint: counts.NSE ? `${counts.NSE.toLocaleString('en-IN')}` : undefined },
+    { key: 'BSE', label: 'All BSE', hint: counts.BSE ? `${counts.BSE.toLocaleString('en-IN')}` : undefined },
+    { key: 'ALL', label: 'Both' },
+  ]
+  return (
+    <div className="mt-4">
+      <div className="label mb-1.5">Stock universe</div>
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Stock universe">
+        {opts.map(o => (
+          <button key={o.key} role="radio" aria-checked={universe === o.key} onClick={() => onPick(o.key)}
+            className={`chip cursor-pointer !py-1 text-xs transition ${universe === o.key ? 'border-accent/60 bg-accent/10 text-accent' : 'hover:text-ink'}`}>
+            {o.label}{o.hint && <span className="text-mute"> · {o.hint}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** Explains what a market-wide scan uses, and what it costs the first time. */
+function MarketNote() {
+  const market = useApp(s => s.market)
+  return (
+    <div className="mt-3 rounded-lg border border-line/70 bg-bg/40 p-2.5 text-xs text-mute">
+      Uses end-of-day data from your shared backend (NSE and BSE files, liquid stocks only), screened on this device. The first scan downloads
+      about 6 MB per exchange once; after that only each day&rsquo;s small update is fetched. Stocks outside the tracked 50 have no live prices, and sectors are not available for them.
+      {market.date && <span className="text-ink"> Data as of {market.date}.</span>}
+      {market.status === 'error' && market.message && <span className="mt-1 block text-down">{market.message}</span>}
+      {market.status === 'ready' && market.message && <span className="mt-1 block text-warn">{market.message}</span>}
+    </div>
+  )
+}
+
+function ScanProgress() {
+  const market = useApp(s => s.market)
+  const scan = useApp(s => s.scan)
+  const downloading = market.status === 'loading' && !scan
+  const p = downloading ? (market.progress && market.progress.total ? market.progress.loaded / market.progress.total : 0) : scan ? scan.done / Math.max(1, scan.total) : 0
+  const text = downloading
+    ? `Downloading market data${market.progress?.total ? ` (${(market.progress.loaded / 1048576).toFixed(1)} of ${(market.progress.total / 1048576).toFixed(1)} MB)` : '…'}`
+    : scan ? `Scanning ${scan.label}: ${scan.done.toLocaleString('en-IN')} of ${scan.total.toLocaleString('en-IN')} stocks` : 'Working…'
+  return (
+    <section className="card p-4" aria-live="polite">
+      <div className="flex justify-between text-sm"><span>{text}</span><span className="num text-mute">{Math.round(p * 100)}%</span></div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-panel2"><div className="h-full rounded-full bg-linear-to-r from-accent to-up transition-all" style={{ width: `${p * 100}%` }} /></div>
+    </section>
   )
 }

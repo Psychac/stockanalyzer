@@ -14,7 +14,7 @@ const DAY = 86_400_000
 /** Keep each request to a year so it stays well inside any row cap. */
 const MAX_SPAN_DAYS = 365
 
-export const codeFor = (i: Instrument): string | null => (i.kind === 'index' ? BREEZE_BENCHMARK.code : lookupCode(i.symbol)?.code ?? null)
+export const codeFor = (i: Instrument): string | null => (i.kind === 'index' ? BREEZE_BENCHMARK.code : i.exchange === 'NSE' ? lookupCode(i.symbol)?.code ?? null : null)
 
 export class BreezeProvider implements MarketDataProvider {
   readonly id = 'breeze' as const

@@ -56,6 +56,20 @@ the app, copy the value after `apisession=` from the address bar into "Or paste 
 - Not verified against a real Breeze login: the index history codes, and the index tick layout. **Run test** reports whether index
   ticks arrive.
 
+### Market-wide scans (NSE and BSE)
+
+Discover has a **Stock universe** picker: Tracked 50 (your live source), All NSE, All BSE, or Both. The market-wide choices read
+end-of-day data published by this project's own backend (`api/data/*`, a daily Vercel cron that stores files in Vercel Blob), so they
+work with any data source, including none.
+
+- First use downloads one file per exchange (about 6 MB each, gzipped) and keeps it in IndexedDB. After that only each day's small
+  update is fetched, and a second scan downloads nothing. Measured on the real data: 2,441 NSE stocks scanned in about 3 s.
+- Only liquid stocks are included (about 2,400 per exchange), and large scans keep just the matches. Stocks outside the tracked 50
+  have end-of-day prices only and no sector.
+- The index strip (Nifty 50, Bank Nifty, ..., **Sensex**, BSE 500, Bankex) comes from the same backend. It is hidden on demo data.
+- Backend setup (Blob store, `CRON_SECRET`, first backfill) is in [`../docs/backend-design.md`](../docs/backend-design.md).
+- `npm run dev` proxies `/api/data` to the deployed site; set `MARKET_DATA_ORIGIN` to use another deployment.
+
 ### Prefilling the app key
 
 Set `VITE_BREEZE_APP_KEY` (see `.env.example`) in a local `.env.local`, or as a Vercel environment variable, and Settings

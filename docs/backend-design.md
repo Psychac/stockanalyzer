@@ -1,6 +1,6 @@
 # Shared backend: market-wide data (design)
 
-Status: stage 1 built (ingest, storage, endpoints, tests). Not yet built: the client that downloads the files, and the market-wide scanner.
+Status: built and verified on real data: ingest, storage, endpoints, client download and cache, market-wide scanner. Not built: search over market stocks, dual-listing dedupe, live BSE prices.
 Spec basis: §4.5. Facts below were read from Vercel's docs on 2026-10-28 and from live requests made from a developer PC
 (not from Vercel's network; the probe exists to close that gap).
 

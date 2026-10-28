@@ -58,7 +58,7 @@ export function Charts() {
   // Levels are drawn for every stock that has enough history. Without an active setup they are labelled as reference only.
   const hasLevels = plan.state !== 'data_insufficient' && plan.riskPerShare > 0
   const active = plan.state === 'entry_eligible' || plan.state === 'setup_forming'
-  const live = feed.mode === 'live' && !!feed.updatedAt && !last.closed
+  const live = feed.mode === 'live' && !!feed.updatedAt && !last.closed && set.source !== 'market'
 
   return (
     <>

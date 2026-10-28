@@ -103,7 +103,7 @@ export function PriceChart({ set, options, plan, height }: { set: CandleSet; opt
     const n = data.candles.length
     chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 130), to: n + 6 })
     built.current = b
-    return () => { chart.remove(); built.current = null }
+    return () => { built.current = null; chart.remove() }
   }, [set.instrument.id, options])
 
   // Live data: update only the latest bar (and a new bar when the day rolls over).
@@ -153,7 +153,12 @@ export function PriceChart({ set, options, plan, height }: { set: CandleSet; opt
     add(plan.entry, '#4cc2ff', `${tag}Entry`, true)
     add(plan.stop, C.down, `${tag}Stop`, true)
     plan.targets.forEach(t => add(t.price, C.up, `${tag}T${t.rr}R`))
-    return () => { for (const l of lines) { try { b.candles.removePriceLine(l) } catch { /* chart already removed */ } } }
+    return () => {
+      // Effects clean up in order, so a rebuilt or unmounted chart is already gone here. Touching it again makes the library
+      // schedule a repaint of a disposed chart, which throws asynchronously.
+      if (built.current !== b) return
+      for (const l of lines) { try { b.candles.removePriceLine(l) } catch { /* removed meanwhile */ } }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planKey, set.instrument.id, options])
 

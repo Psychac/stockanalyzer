@@ -31,5 +31,9 @@ export default defineConfig({
       },
     }),
   ],
+  // Local development has no api/data functions, so read the shared market data from the deployed site. Override with
+  // MARKET_DATA_ORIGIN to point elsewhere.
+  server: { proxy: { '/api/data': { target: process.env.MARKET_DATA_ORIGIN ?? 'https://stockanalyzer-ivory.vercel.app', changeOrigin: true } } },
+  preview: { proxy: { '/api/data': { target: process.env.MARKET_DATA_ORIGIN ?? 'https://stockanalyzer-ivory.vercel.app', changeOrigin: true } } },
   test: { include: ['src/**/*.test.ts', 'api/**/*.test.ts'] },
 })

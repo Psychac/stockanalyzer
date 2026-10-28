@@ -10,7 +10,7 @@ export const LIVESTREAM_URL = 'https://livestream.icicidirect.com'
 export const streamToken = (token: string) => `4.1!${token}`
 
 export const tokenFor = (i: Instrument): string | null =>
-  i.kind === 'index' ? BREEZE_BENCHMARK.token : lookupCode(i.symbol)?.token ?? null
+  i.kind === 'index' ? BREEZE_BENCHMARK.token : i.exchange === 'NSE' ? lookupCode(i.symbol)?.token ?? null : null
 
 const num = (v: unknown) => {
   const n = typeof v === 'string' ? Number(v) : v

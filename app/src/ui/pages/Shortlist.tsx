@@ -5,7 +5,8 @@ import { dateOnly, pct, price, tone } from '../format'
 
 export function Shortlist() {
   const shortlist = useApp(s => s.shortlist)
-  const sets = useApp(s => s.sets)
+  const setFor = useApp(s => s.setFor)
+  const marketStatus = useApp(s => s.market.status)
   const update = useApp(s => s.updateShortlist)
   const remove = useApp(s => s.removeFromShortlist)
   const openChart = useApp(s => s.openChart)
@@ -34,8 +35,17 @@ export function Shortlist() {
               <div className="flex items-center gap-2 px-1"><h2 className="text-sm font-semibold">{st.label}</h2><span className="chip">{items.length}</span></div>
               {items.length === 0 && <div className="rounded-2xl border border-dashed border-line/70 p-4 text-center text-xs text-mute">Empty</div>}
               {items.map(item => {
-                const set = sets.get(item.instrumentId)
-                if (!set) return null
+                const set = setFor(item.instrumentId)
+                if (!set) {
+                  // A stock from the market-wide data whose files are not on this device yet.
+                  return (
+                    <article key={item.instrumentId} className="card p-4">
+                      <div className="font-semibold">{item.instrumentId.replace(/^\w+:/, '')}</div>
+                      <p className="mt-1 text-xs text-mute">{marketStatus === 'loading' ? 'Loading market data…' : 'Prices need the market-wide data. Run a scan on All NSE or All BSE in Discover to load it.'}</p>
+                      <button className="btn btn-sm btn-ghost mt-2 text-down" onClick={() => void remove(item.instrumentId)}>Remove</button>
+                    </article>
+                  )
+                }
                 const c = set.candles
                 const last = c[c.length - 1].c
                 const chg = (last / c[c.length - 2].c - 1) * 100

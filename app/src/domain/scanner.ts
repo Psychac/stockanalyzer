@@ -349,45 +349,93 @@ export interface ScanRun {
   scannerName: string
   scannerVersion: number
   ranAt: number
+  /** How many stocks were looked at. */
   universeSize: number
   source: CandleSet['source']
+  /** Which stock universe this ran on, e.g. "Tracked 50" or "All NSE". */
+  universe?: string
+  /** Large scans keep only the matches, so the saved run stays small. */
+  matchesOnly?: boolean
   results: ScanResult[]
 }
+
+/** Evaluate one stock. Null when it has too little history to look at. */
+export function scanStock(config: ScannerConfig, set: CandleSet, benchmark: CandleSet | null): ScanResult | null {
+  const inst = set.instrument
+  const n = set.candles.length
+  if (n < 2) return null
+  const ctx = makeContext(set, benchmark)
+  const close = ctx.closes[n - 1]
+  const base = {
+    instrumentId: inst.id, symbol: inst.symbol, name: inst.name, sector: inst.sector, close,
+    changePct: (close / ctx.closes[n - 2] - 1) * 100, asOf: set.asOf,
+  }
+  const u = config.universe
+  const avgTv = last(series(ctx, 'avgTradedValue', { period: 20 }))
+  let excludedBy: string | null = null
+  if (u.minPrice !== null && close < u.minPrice) excludedBy = `Price below ₹${u.minPrice}`
+  else if (u.maxPrice !== null && close > u.maxPrice) excludedBy = `Price above ₹${u.maxPrice}`
+  else if (u.sectors.length && !u.sectors.includes(inst.sector)) excludedBy = `Sector ${inst.sector} not selected`
+  else if (u.minAvgTradedValueCr !== null && (avgTv === null || avgTv / 1e7 < u.minAvgTradedValueCr)) {
+    excludedBy = avgTv === null ? 'Liquidity unknown' : `Avg traded value ₹${(avgTv / 1e7).toFixed(1)} Cr below minimum`
+  }
+  if (excludedBy) return { ...base, matched: false, excludedBy, score: null, factors: [], tree: null, warnings: [] }
+
+  const tree = evalNode(ctx, config.root) as GroupResult
+  const factors = rankFactors(ctx, config.ranking)
+  const warnings: string[] = []
+  if (collectRules(tree).some(r => r.missing)) warnings.push('Some conditions lacked enough history and were treated as not met')
+  if (!set.candles[n - 1].closed) warnings.push('Latest candle is still forming')
+  if (!benchmark) warnings.push('No benchmark data: relative strength unavailable')
+  return { ...base, matched: tree.pass, excludedBy: null, score: combineScore(factors), factors, tree, warnings }
+}
+
+const byRank = (a: ScanResult, b: ScanResult) => Number(b.matched) - Number(a.matched) || (b.score ?? -1) - (a.score ?? -1)
 
 export function runScanner(config: ScannerConfig, universe: CandleSet[], benchmark: CandleSet | null): ScanRun {
   const results: ScanResult[] = []
   for (const set of universe) {
-    const inst = set.instrument
-    const n = set.candles.length
-    if (n < 2) continue
-    const ctx = makeContext(set, benchmark)
-    const close = ctx.closes[n - 1]
-    const base = {
-      instrumentId: inst.id, symbol: inst.symbol, name: inst.name, sector: inst.sector, close,
-      changePct: (close / ctx.closes[n - 2] - 1) * 100, asOf: set.asOf,
-    }
-    const u = config.universe
-    const avgTv = last(series(ctx, 'avgTradedValue', { period: 20 }))
-    let excludedBy: string | null = null
-    if (u.minPrice !== null && close < u.minPrice) excludedBy = `Price below ₹${u.minPrice}`
-    else if (u.maxPrice !== null && close > u.maxPrice) excludedBy = `Price above ₹${u.maxPrice}`
-    else if (u.sectors.length && !u.sectors.includes(inst.sector)) excludedBy = `Sector ${inst.sector} not selected`
-    else if (u.minAvgTradedValueCr !== null && (avgTv === null || avgTv / 1e7 < u.minAvgTradedValueCr)) {
-      excludedBy = avgTv === null ? 'Liquidity unknown' : `Avg traded value ₹${(avgTv / 1e7).toFixed(1)} Cr below minimum`
-    }
-    if (excludedBy) { results.push({ ...base, matched: false, excludedBy, score: null, factors: [], tree: null, warnings: [] }); continue }
-
-    const tree = evalNode(ctx, config.root) as GroupResult
-    const factors = rankFactors(ctx, config.ranking)
-    const warnings: string[] = []
-    if (collectRules(tree).some(r => r.missing)) warnings.push('Some conditions lacked enough history and were treated as not met')
-    if (!set.candles[n - 1].closed) warnings.push('Latest candle is still forming')
-    if (!benchmark) warnings.push('No benchmark data: relative strength unavailable')
-    results.push({ ...base, matched: tree.pass, excludedBy: null, score: combineScore(factors), factors, tree, warnings })
+    const r = scanStock(config, set, benchmark)
+    if (r) results.push(r)
   }
-  results.sort((a, b) => Number(b.matched) - Number(a.matched) || (b.score ?? -1) - (a.score ?? -1))
+  results.sort(byRank)
   return {
     scannerId: config.id, scannerName: config.name, scannerVersion: config.version, ranAt: Date.now(),
     universeSize: universe.length, source: universe[0]?.source ?? 'demo', results,
+  }
+}
+
+export interface LazyScan {
+  ids: string[]
+  /** Builds one stock's candles on demand, so thousands of stocks never sit in memory as candle objects at once. */
+  make: (id: string) => CandleSet | null
+  benchmarkFor: (set: CandleSet) => CandleSet | null
+  label: string
+  source: CandleSet['source']
+  onProgress?: (done: number, total: number) => void
+  /** Check between chunks; return true to stop early. */
+  cancelled?: () => boolean
+}
+
+/** Same result as `runScanner`, but yields to the browser between chunks and keeps only matches (a big scan's non-matches are noise). */
+export async function runScannerLazy(config: ScannerConfig, o: LazyScan, chunk = 120): Promise<ScanRun | null> {
+  const results: ScanResult[] = []
+  let looked = 0
+  for (let i = 0; i < o.ids.length; i += chunk) {
+    if (o.cancelled?.()) return null
+    for (const id of o.ids.slice(i, i + chunk)) {
+      const set = o.make(id)
+      if (!set) continue
+      const r = scanStock(config, set, o.benchmarkFor(set))
+      looked++
+      if (r?.matched) results.push(r)
+    }
+    o.onProgress?.(Math.min(i + chunk, o.ids.length), o.ids.length)
+    await new Promise<void>(r => setTimeout(r, 0))
+  }
+  results.sort(byRank)
+  return {
+    scannerId: config.id, scannerName: config.name, scannerVersion: config.version, ranAt: Date.now(),
+    universeSize: looked, source: o.source, universe: o.label, matchesOnly: true, results,
   }
 }

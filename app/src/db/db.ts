@@ -4,6 +4,8 @@ import type { Candle, DataSource } from '../domain/types'
 import type { FyersCredentials, FyersSession } from '../providers/fyers/types'
 import type { BreezeSession } from '../providers/breeze/session'
 import type { CandleCache } from '../providers/loader'
+import type { Exchange, History } from '../../api/_lib/data/history'
+import type { MarketCache } from '../market/client'
 
 export type ShortlistStatus = 'watching' | 'researching' | 'ready' | 'rejected'
 export const STATUSES: { key: ShortlistStatus; label: string }[] = [
@@ -41,6 +43,7 @@ export interface StoredBreeze { appKey: string; session?: BreezeSession }
 class AppDB extends Dexie {
   candles!: Table<{ id: string; candles: Candle[]; fetchedAt: number }, string>
   credentials!: Table<{ key: string } & Record<string, unknown>, string>
+  market!: Table<{ ex: string; history: History; date: string }, string>
   scanners!: Table<ScannerConfig, string>
   shortlist!: Table<ShortlistItem, string>
   settings!: Table<{ key: string; value: unknown }, string>
@@ -57,6 +60,8 @@ class AppDB extends Dexie {
     })
     // v2: market-data cache and provider credentials (additive; v1 data is untouched).
     this.version(2).stores({ candles: 'id, fetchedAt', credentials: 'key' })
+    // v3: market-wide history downloaded from the shared backend, one row per exchange (additive).
+    this.version(3).stores({ market: 'ex' })
   }
 }
 
@@ -67,6 +72,12 @@ export const cacheFor = (source: DataSource): CandleCache => ({
   get: async id => db.candles.get(`${source}:${id}`),
   put: async (id, candles, fetchedAt) => { await db.candles.put({ id: `${source}:${id}`, candles, fetchedAt }) },
 })
+
+/** Not part of export/import: it is public market data that can be re-downloaded. */
+export const marketCache: MarketCache = {
+  get: async (ex: Exchange) => { const r = await db.market.get(ex); return r ? { history: r.history, date: r.date } : undefined },
+  put: async (ex, history, date) => { await db.market.put({ ex, history, date }) },
+}
 
 export async function loadCredentials(): Promise<StoredCredentials | null> {
   const row = await db.credentials.get('fyers')

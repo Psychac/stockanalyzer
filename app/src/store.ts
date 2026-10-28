@@ -1,10 +1,10 @@
 import { create } from 'zustand'
 import type { CandleSet, DataSource, Instrument } from './domain/types'
-import { runScanner, scannerSchema, type ScannerConfig, type ScanRun } from './domain/scanner'
+import { runScanner, runScannerLazy, scannerSchema, type ScannerConfig, type ScanRun } from './domain/scanner'
 import { PRESETS, isPreset } from './domain/presets'
 import { isMarketOpen } from './domain/time'
 import {
-  DEFAULT_SETTINGS, cacheFor, clearSession, db, loadBreeze, loadCredentials, loadDataSource, loadSettings, saveBreeze, saveCredentials, saveDataSource, saveSettings,
+  DEFAULT_SETTINGS, cacheFor, marketCache, clearSession, db, loadBreeze, loadCredentials, loadDataSource, loadSettings, saveBreeze, saveCredentials, saveDataSource, saveSettings,
   type Settings, type ShortlistItem, type ShortlistStatus,
 } from './db/db'
 import { demoProvider } from './providers/demo'
@@ -18,6 +18,10 @@ import type { FyersSession } from './providers/fyers/types'
 import { BreezeClient } from './providers/breeze/client'
 import { BreezeProvider } from './providers/breeze/provider'
 import { BREEZE_INDICES } from './providers/breeze/codes'
+import { BENCHMARK_FOR, MarketUnavailable, fetchIndexBars, fetchManifest, realNet, syncExchange, toCandleSet } from './market/client'
+import type { Exchange, History } from '../api/_lib/data/history'
+import { loadMaster } from './providers/breeze/master'
+import type { Candle } from './domain/types'
 import { adoptRow, type MasterRow } from './providers/breeze/master'
 import { indexLevel, type IndexLevel } from './indices'
 import { lastSessionClose } from './domain/time'
@@ -65,6 +69,9 @@ interface State {
   extras: Map<string, CandleSet>
   extraStatus: { id: string; state: 'loading' | 'error'; message?: string } | null
   indexLevels: IndexLevel[]
+  /** Market-wide end-of-day data from the shared backend (NSE and BSE). Held outside the store: it is large. */
+  market: { status: 'idle' | 'loading' | 'ready' | 'error'; message: string | null; progress: { loaded: number; total: number } | null; date: string | null; counts: Partial<Record<Exchange, number>> }
+  scan: { done: number; total: number; label: string } | null
   userScanners: ScannerConfig[]
   shortlist: ShortlistItem[]
   settings: Settings
@@ -76,6 +83,10 @@ interface State {
   /** Open any NSE stock from search. Outside the tracked universe it is fetched on demand (Breeze only). */
   openStock: (row: MasterRow | { symbol: string }) => Promise<void>
   loadMarket: () => Promise<void>
+  loadMarketData: (exchanges: Exchange[]) => Promise<boolean>
+  runMarketScan: (cfg: ScannerConfig, universe: 'NSE' | 'BSE' | 'ALL') => Promise<void>
+  /** Candles for any stock the app can show: tracked, opened from search, or in the market-wide data. */
+  setFor: (id: string) => CandleSet | undefined
   setSource: (s: DataSource) => Promise<void>
   connectFyers: (appId: string, secret: string, remember: boolean) => void
   disconnectFyers: () => Promise<void>
@@ -148,17 +159,38 @@ export const useApp = create<State>((set, get) => {
   /** What was last folded into the candles per instrument, so a repeated tick is not re-applied or re-rendered. */
   const applied = new Map<string, string>()
   const eodIndexCandles = new Map<string, CandleSet['candles']>()
+  /** Index history published by the shared backend (Nifty, Sensex, ...), kept apart so switching sources does not lose it. */
+  const backendIndices = new Map<string, Candle[]>()
+  let indexList: { id: string; name: string }[] = BREEZE_INDICES.map(i => ({ id: i.id, name: i.name }))
+  let indicesReady: Promise<void> = Promise.resolve()
+  const marketHist: Partial<Record<Exchange, History>> = {}
+  const marketDate: Partial<Record<Exchange, string>> = {}
+  let nseNames: Map<string, string> | undefined
+  let scanRunning = false
 
   function recomputeIndices(now = Date.now()) {
     const ticks = new Map((streaming?.liveIndices() ?? []).map(t => [t.id, t]))
-    const levels = BREEZE_INDICES.map(ix => indexLevel(ix.id, ix.name, eodIndexCandles.get(ix.id), ticks.get(ix.id), now)).filter((l): l is IndexLevel => !!l)
+    const levels = indexList.map(ix => indexLevel(ix.id, ix.name, eodIndexCandles.get(ix.id), ticks.get(ix.id), now)).filter((l): l is IndexLevel => !!l)
     const prev = get().indexLevels
     const same = levels.length === prev.length && levels.every((l, i) => l.ltp === prev[i].ltp && l.live === prev[i].live && l.prevClose === prev[i].prevClose)
     if (!same) set({ indexLevels: levels })
   }
 
   /** Daily index bars for the dashboard strip: cache-first, a handful of calls per session. */
+  /** Small file, so it loads at startup for every data source: gives Sensex and the other indices without any broker. */
+  async function loadMarketIndices() {
+    try {
+      const items = await fetchIndexBars(await fetchManifest())
+      if (!items.length) return
+      for (const i of items) { backendIndices.set(i.id, i.candles); eodIndexCandles.set(i.id, i.candles) }
+      indexList = items.map(({ id, name }) => ({ id, name }))
+      recomputeIndices()
+    } catch { /* the strip falls back to Breeze, or stays empty */ }
+  }
+
   async function loadIndexLevels(provider: BreezeProvider, now: number) {
+    await indicesReady
+    if (backendIndices.size >= 4) { recomputeIndices(now); return } // already have them without spending Breeze calls
     const cache = cacheFor('breeze')
     const need = lastSessionClose(now)
     for (const ix of BREEZE_INDICES) {
@@ -219,6 +251,16 @@ export const useApp = create<State>((set, get) => {
     }
   }
 
+  const countsOf = () => ({ ...(marketHist.NSE ? { NSE: Object.keys(marketHist.NSE.stocks).length } : {}), ...(marketHist.BSE ? { BSE: Object.keys(marketHist.BSE.stocks).length } : {}) })
+
+  async function loadCachedMarket(exs: Exchange[]) {
+    for (const ex of exs) {
+      const c = await marketCache.get(ex)
+      if (c) { marketHist[ex] = c.history; marketDate[ex] = c.date }
+    }
+    set({ market: { ...get().market, status: Object.keys(marketHist).length ? 'ready' : get().market.status, date: marketDate[exs[0]] ?? get().market.date, counts: countsOf() } })
+  }
+
   return {
     route: fromHash(),
     chartSymbol: null,
@@ -235,6 +277,8 @@ export const useApp = create<State>((set, get) => {
     extras: new Map(),
     extraStatus: null,
     indexLevels: [],
+    market: { status: 'idle', message: null, progress: null, date: null, counts: {} },
+    scan: null,
     userScanners: [],
     shortlist: [],
     settings: DEFAULT_SETTINGS,
@@ -243,6 +287,10 @@ export const useApp = create<State>((set, get) => {
     async init() {
       window.addEventListener('hashchange', () => set({ route: fromHash() }))
       await get().reloadUserData()
+      indicesReady = loadMarketIndices()
+      // Shortlisted stocks from the market-wide data need that data to show prices; read it from this device, no download.
+      const wantEx = [...new Set(get().shortlist.map(s => s.instrumentId).filter(id => id.startsWith('BSE:') || (id.startsWith('NSE:') && !UNIVERSE.some(u => u.id === id))).map(id => id.slice(0, 3) as Exchange))]
+      if (wantEx.length) void loadCachedMarket(wantEx)
       try {
         const done = await completeLoginFromUrl()
         if (done) {
@@ -361,6 +409,7 @@ export const useApp = create<State>((set, get) => {
       await saveDataSource(s)
       applied.clear()
       eodIndexCandles.clear()
+      for (const [id, c] of backendIndices) eodIndexCandles.set(id, c)
       set({ source: s, sets: new Map(), extras: new Map(), indexLevels: [], extraStatus: null, benchmark: null })
       await get().loadMarket()
     },
@@ -407,7 +456,85 @@ export const useApp = create<State>((set, get) => {
     },
 
     go(r) { location.hash = `#/${r}` },
-    openChart(id) { set({ chartSymbol: id }); get().go('charts') },
+    openChart(id) {
+      if (!get().sets.has(id) && !get().extras.has(id)) {
+        const h = marketHist[id.slice(0, 3) as Exchange]
+        const cs = h ? toCandleSet(h, id, nseNames) : null
+        if (cs) set({ extras: new Map(get().extras).set(id, cs) })
+      }
+      set({ chartSymbol: id })
+      get().go('charts')
+    },
+
+    setFor(id) {
+      const { sets, extras } = get()
+      const known = sets.get(id) ?? extras.get(id)
+      if (known) return known
+      const h = marketHist[id.slice(0, 3) as Exchange]
+      return (h ? toCandleSet(h, id, nseNames) : null) ?? undefined
+    },
+
+    async loadMarketData(exchanges) {
+      const cur = get().market
+      set({ market: { ...cur, status: 'loading', message: null, progress: { loaded: 0, total: 0 } } })
+      try {
+        const m = await fetchManifest()
+        for (const ex of exchanges) {
+          if (marketHist[ex] && marketDate[ex] === m.latestDate) continue
+          const r = await syncExchange(ex, m, marketCache, realNet, (loaded, total) => set({ market: { ...get().market, progress: { loaded, total } } }))
+          if (!r) throw new MarketUnavailable(`${ex} market data has not been published.`)
+          marketHist[ex] = r.history
+          marketDate[ex] = r.date
+        }
+        nseNames ??= await loadMaster().then(rows => new Map(rows.map(r => [r.symbol, r.name]))).catch(() => new Map<string, string>())
+        set({ market: { status: 'ready', message: null, progress: null, date: m.latestDate, counts: countsOf() } })
+        return true
+      } catch (e) {
+        // Offline or the service is down: a copy already on this device is still useful, and is labelled as such.
+        for (const ex of exchanges) {
+          if (marketHist[ex]) continue
+          const c = await marketCache.get(ex)
+          if (c) { marketHist[ex] = c.history; marketDate[ex] = c.date }
+        }
+        if (exchanges.every(ex => marketHist[ex])) {
+          const d = marketDate[exchanges[0]] ?? null
+          set({ market: { status: 'ready', message: `Could not reach the market data service (${errText(e)}). Using the copy saved on this device${d ? ` from ${d}` : ''}.`, progress: null, date: d, counts: countsOf() } })
+          return true
+        }
+        set({ market: { status: 'error', message: errText(e), progress: null, date: null, counts: countsOf() } })
+        return false
+      }
+    },
+
+    async runMarketScan(cfg, universe) {
+      if (scanRunning) return
+      const exs: Exchange[] = universe === 'ALL' ? ['NSE', 'BSE'] : [universe]
+      scanRunning = true
+      try {
+        if (!(await get().loadMarketData(exs))) return
+        const bench = (ex: Exchange): CandleSet | null => {
+          const c = backendIndices.get(BENCHMARK_FOR[ex])
+          return c ? { instrument: { id: BENCHMARK_FOR[ex], exchange: ex, symbol: BENCHMARK_FOR[ex], name: 'Benchmark', sector: 'Index', kind: 'index' }, timeframe: '1D', candles: c, source: 'market', asOf: c[c.length - 1].t } : null
+        }
+        const benches: Record<Exchange, CandleSet | null> = { NSE: bench('NSE'), BSE: bench('BSE') }
+        const ids = exs.flatMap(ex => Object.keys(marketHist[ex]!.stocks))
+        const label = universe === 'ALL' ? 'All NSE + BSE' : `All ${universe}`
+        set({ scan: { done: 0, total: ids.length, label } })
+        const run = await runScannerLazy(cfg, {
+          ids, label, source: 'market',
+          make: id => toCandleSet(marketHist[id.slice(0, 3) as Exchange]!, id, nseNames),
+          benchmarkFor: s => benches[s.instrument.exchange],
+          onProgress: (done, total) => set({ scan: { done, total, label } }),
+        })
+        if (run) {
+          set({ runs: { ...get().runs, [cfg.id]: run } })
+          void db.scanRuns.put({ ...run, id: cfg.id })
+        }
+      } finally {
+        scanRunning = false
+        set({ scan: null })
+      }
+    },
 
     async openStock(row) {
       const id = `NSE:${row.symbol}`

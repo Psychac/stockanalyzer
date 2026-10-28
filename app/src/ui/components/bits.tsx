@@ -35,6 +35,9 @@ export function DataBadge({ set, compact }: { set?: CandleSet | null; compact?: 
   }[feed.mode]
   const color = { warn: 'border-warn/40 text-warn', up: 'border-up/40 text-up', down: 'border-down/40 text-down', accent: 'border-accent/40 text-accent' }[view.tone]
   const dot = { warn: 'bg-warn', up: 'bg-up', down: 'bg-down', accent: 'bg-accent' }[view.tone]
+  if (set?.source === 'market') {
+    return <span className="chip border-accent/40 text-accent" title="End-of-day data from the shared backend (NSE and BSE files), not a live feed"><span className="h-1.5 w-1.5 rounded-full bg-accent" />EOD · SHARED DATA<span className="text-mute">· as of {dateOnly(set.asOf)} close</span></span>
+  }
   return (
     <span className={`chip ${color}`} title={view.tip}>
       <span className={`h-1.5 w-1.5 rounded-full ${dot} ${feed.mode === 'live' && open && feed.updatedAt ? 'animate-pulse' : ''}`} />
@@ -180,7 +183,8 @@ export function IndexStrip() {
   const levels = useApp(s => s.indexLevels)
   const source = useApp(s => s.source)
   const status = useApp(s => s.marketStatus)
-  if (source !== 'breeze' || status !== 'ready') return null
+  // Demo data must never sit beside real index levels.
+  if (source === 'demo' || status !== 'ready') return null
   if (levels.length === 0) {
     return <p className="mb-4 text-xs text-mute">Index levels are not available from Breeze yet. They appear once Breeze returns daily bars for the Nifty indices.</p>
   }

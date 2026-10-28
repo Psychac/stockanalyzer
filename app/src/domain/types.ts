@@ -12,7 +12,8 @@ export interface Instrument {
   kind: 'equity' | 'index'
 }
 
-export type DataSource = 'demo' | 'fyers' | 'breeze'
+/** `market` is end-of-day data from the shared backend (NSE and BSE bhavcopy). */
+export type DataSource = 'demo' | 'fyers' | 'breeze' | 'market'
 
 export interface Candle {
   /** Start of bar, UTC epoch milliseconds. */
