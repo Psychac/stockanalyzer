@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_SESSIONS, applyDay, candlesOf, emptyHistory, prune, type DayRow } from './history'
-import { nseDate, parseBse, parseNse, splitCsv } from './parse'
-import { INDICES, advance, bseUrl, nseUrl, type Deps } from './ingest'
-import { memoryStore } from './store'
+import { MAX_SESSIONS, applyDay, candlesOf, emptyHistory, prune, type DayRow } from './history.js'
+import { nseDate, parseBse, parseNse, splitCsv } from './parse.js'
+import { INDICES, advance, bseUrl, nseUrl, type Deps } from './ingest.js'
+import { memoryStore } from './store.js'
 
 const NSE_CSV = (date: string, rows: string[]) => `SYMBOL, SERIES, DATE1, PREV_CLOSE, OPEN_PRICE, HIGH_PRICE, LOW_PRICE, LAST_PRICE, CLOSE_PRICE, AVG_PRICE, TTL_TRD_QNTY, TURNOVER_LACS, NO_OF_TRADES, DELIV_QTY, DELIV_PER\n${rows.map(r => r.replace('DATE', date)).join('\n')}`
 const BSE_HEAD = 'TradDt,BizDt,Sgmt,Src,FinInstrmTp,FinInstrmId,ISIN,TckrSymb,SctySrs,XpryDt,FininstrmActlXpryDt,StrkPric,OptnTp,FinInstrmNm,OpnPric,HghPric,LwPric,ClsPric,LastPric,PrvsClsgPric,UndrlygPric,SttlmPric,OpnIntrst,ChngInOpnIntrst,TtlTradgVol,TtlTrfVal,TtlNbOfTxsExctd,SsnId,NewBrdLotQty,Rmks,Rsvd1,Rsvd2,Rsvd3,Rsvd4'

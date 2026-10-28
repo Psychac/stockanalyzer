@@ -1,6 +1,6 @@
-import { admissible, applyDay, emptyHistory, mergeHistories, prune, sliceOf, type DayRow, type History } from './history'
-import { parseBse, parseNse, type Parsed } from './parse'
-import { emptyManifest, type Manifest, type Store } from './store'
+import { admissible, applyDay, emptyHistory, mergeHistories, prune, sliceOf, type DayRow, type History } from './history.js'
+import { parseBse, parseNse, type Parsed } from './parse.js'
+import { emptyManifest, type Manifest, type Store } from './store.js'
 
 /**
  * Daily ingest. One routine serves both the nightly cron (one new day) and the first-time backfill (about a year of days):

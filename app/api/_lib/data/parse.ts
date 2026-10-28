@@ -1,4 +1,4 @@
-import type { DayRow } from './history'
+import type { DayRow } from './history.js'
 
 /** Split one CSV line, honouring double quotes. */
 export function splitCsv(line: string): string[] {
