@@ -4,8 +4,8 @@
 **Version:** 1.0 — Initial design baseline  
 **Status:** Proposed; ready for implementation planning  
 **Target platforms:** Windows desktop and Android  
-**Market:** Indian equities, primarily NSE initially, with BSE support planned  
-**Architecture:** Local-first TypeScript application; no user-maintained backend  
+**Market:** Indian equities on NSE and BSE, including the main indices (Nifty, Sensex)  
+**Architecture:** Local-first TypeScript client plus a small stateless serverless backend (Vercel) for relays and shared market-data ingestion; no per-user server state  
 **Execution model:** Research, alerts and trade planning only; no automatic order placement
 
 ---
@@ -30,7 +30,7 @@ Signals are advisory, rule-based outputs, not guaranteed predictions. The system
 
 ## 1.1 Design principles
 
-1. **Local-first:** store user data locally; no mandatory cloud account or backend.
+1. **Local-first:** store user data locally; no user accounts and no per-user server state. A small shared backend is allowed for market-data ingestion and provider relays (§4.5); it holds public market data only, never user data or credentials.
 2. **Independent devices:** the Android app must not depend on the user's Windows PC.
 3. **Configurable by design:** presets and custom scanners use the same underlying engine.
 4. **Transparent signals:** every score and trade level must be explainable.
@@ -59,7 +59,7 @@ Signals are advisory, rule-based outputs, not guaranteed predictions. The system
 - Automatic order placement or broker execution.
 - Social trading, copy trading or public signal distribution.
 - Guaranteed price predictions or unvalidated win probabilities.
-- A cloud-hosted backend, mandatory cloud synchronization or user accounts.
+- Mandatory cloud synchronization, user accounts, or any server-side storage of user data or broker credentials. (A stateless shared backend for public market data and provider relays is in scope; see §4.5.)
 - A proprietary news-reporting service.
 - Full financial-statement ingestion and valuation modelling in the first milestone.
 - Dependence on scraping exchange websites or bypassing provider restrictions.
@@ -150,7 +150,7 @@ Domain calculations must not depend on React components or a particular provider
 
 Windows and Android are separate installations, each with its own local database, provider configuration and cached data.
 
-Neither device hosts an application server for the other.
+Neither device hosts an application server for the other. Both installations may use the same deployed shared backend (§4.5), which they treat as an external service.
 
 The application may communicate directly with external market-data and news services. Cross-device synchronization is not part of the MVP; export/import is the initial portability mechanism.
 
@@ -164,7 +164,20 @@ Where supported, credentials should be stored using platform-secure storage. How
 
 Before selecting an integration, verify the provider's authentication flow, CORS requirements, session renewal, WebSocket support, client-application restrictions and licensing terms.
 
-If a provider requires a confidential server-side secret or mandatory intermediary, either select a compliant native/direct-client integration or change providers. Do not silently introduce a local server that the Android installation depends on.
+If a provider requires a confidential server-side secret or mandatory intermediary, prefer a compliant direct-client integration, then the shared backend relay (§4.5), then another provider. Do not introduce a server that runs on the user's own PC and that the Android installation depends on. A relay must be stateless, forward only fixed provider endpoints, and never store or log credentials.
+
+## 4.5 Shared backend
+
+A small serverless backend (initially Vercel) is part of the architecture. It exists for two jobs:
+
+1. **Provider relays** for providers a browser cannot call directly (ICICI Breeze).
+2. **Market-data ingestion:** a scheduled job downloads public end-of-day files from NSE and BSE and publishes compact, versioned data files that clients download and cache, so clients never make per-stock calls for market-wide screening.
+
+Constraints:
+- Public market data only. No user data, accounts or credentials are stored server-side.
+- It must run within the free tier of its host: once-a-day scheduling, bounded function duration, and small, infrequent writes. Heavy work is resumable in chunks and clients do the screening locally.
+- The client must degrade gracefully: if the backend or its data is unavailable, cached data stays usable and is labelled stale.
+- Redistribution terms of NSE and BSE data must be reviewed before the deployment is shared beyond personal use.
 
 # 5. Market-data strategy
 
@@ -680,7 +693,7 @@ Paper trades must be clearly labelled simulated. Live trading execution remains 
 
 # 13. Security, privacy and licensing
 
-- No mandatory application backend.
+- The shared backend (§4.5) stores no user data or credentials, and relays forward only fixed provider endpoints.
 - No embedded secrets in client bundles or source control.
 - Platform-secure credential storage where supported.
 - Provider authentication and session renewal must follow documented requirements.
@@ -775,7 +788,7 @@ The MVP is acceptable when:
 5. Charts display correct candles and indicator values for tested fixtures.
 6. Entry, stop and target calculations are deterministic and test-covered.
 7. Cached research and scanner configurations remain available offline.
-8. The Android installation does not depend on a server running on the user's PC.
+8. The Android installation does not depend on a server running on the user's PC. It may depend on the deployed shared backend (§4.5), and must remain usable from cache if that backend is down.
 9. Live data failures and stale data are clearly visible.
 10. News items link to original sources and identify their source type.
 11. Historical tests do not silently assume favourable outcomes for ambiguous candles.
@@ -790,7 +803,7 @@ The following must remain explicit until validated:
 | Question | Current position |
 |---|---|
 | Market-data provider | Breeze first; alternative provider if necessary |
-| BSE live coverage | Not provided by Breeze; separate compliant source required |
+| BSE coverage | Not provided by Breeze. End-of-day via BSE bhavcopy and Upstox daily candles through the shared backend; live BSE prices unresolved |
 | Browser-only Breeze access | Unproven; prototype required |
 | Secure credential handling | Platform-specific solution required |
 | Android background monitoring | Best effort; must not be promised as uninterrupted |
