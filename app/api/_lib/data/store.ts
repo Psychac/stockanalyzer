@@ -1,7 +1,8 @@
 import { gunzipSync, gzipSync } from 'node:zlib'
 import { del, list, put } from '@vercel/blob'
 
-export interface FileRef { file: string; date: string }
+/** `rev` counts rewrites of the published files; a client whose cache has a lower rev downloads again even for the same date. */
+export interface FileRef { file: string; date: string; rev?: number }
 
 export interface Manifest {
   version: 1
@@ -12,12 +13,16 @@ export interface Manifest {
   /** Single-day updates after the snapshots, oldest first, one file per exchange per day. */
   deltas: (FileRef & { ex: 'NSE' | 'BSE' })[]
   indices: FileRef | null
+  /** Company metadata (ISIN, names, industries) and the search list, both rebuilt when a snapshot is written. */
+  meta: FileRef | null
+  search: FileRef | null
+  rev: number
   updatedAt: string
   /** Public URLs by file name, so clients need no knowledge of the storage host. */
   urls: Record<string, string>
 }
 
-export const emptyManifest = (): Manifest => ({ version: 1, latestDate: null, snapshots: {}, deltas: [], indices: null, updatedAt: new Date(0).toISOString(), urls: {} })
+export const emptyManifest = (): Manifest => ({ version: 1, latestDate: null, snapshots: {}, deltas: [], indices: null, meta: null, search: null, rev: 0, updatedAt: new Date(0).toISOString(), urls: {} })
 
 /** Where data files live. Blob in production, memory in tests. Everything is stored gzipped except the manifest. */
 export interface Store {

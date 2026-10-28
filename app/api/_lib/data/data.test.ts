@@ -34,6 +34,15 @@ describe('parsers', () => {
     expect(parseNse('foo,bar\n1,2')).toBeNull()
     expect(parseBse('foo,bar\n1,2')).toBeNull()
   })
+  it('keeps only real shares from the BSE file: drops funds, ETFs, bonds and government securities', () => {
+    const r = (id: string, sym: string, series: string, isin: string) => bseRow('2026-10-27', id, sym, sym, 100, 101, 99, 100, 100, 10).replace(',A,', `,${series},`).replace('INE000A01000', isin)
+    const p = parseBse([
+      BSE_HEAD,
+      r('1', 'SHARE', 'A', 'INE117A01022'), r('2', 'SME', 'MT', 'INE0AAA01010'), r('3', 'TTRADE', 'T', 'INE222B01015'),
+      r('4', 'ETF', 'B', 'INF740KA1EU7'), r('5', 'BOND', 'F', 'INE652X07100'), r('6', 'GSEC', 'G', 'IN0020230010'), r('7', 'INFRA', 'IF', 'INE333C01010'),
+    ].join('\n'))!
+    expect(p.rows.map(x => x.sym)).toEqual(['SHARE', 'SME', 'TTRADE'])
+  })
   it('parses the BSE file keyed by scrip code, equity only', () => {
     const p = parseBse([BSE_HEAD, bseRow('2026-10-27', '500002', 'ABB', 'ABB INDIA LIMITED', 6371.5, 6542, 6340.65, 6542, 6350, 9990), bseRow('2026-10-27', '800001', 'DEBT', 'A BOND', 100, 100, 100, 100, 100, 5, 'DBT')].join('\n'))!
     expect(p.date).toBe('2026-10-27')
@@ -113,7 +122,7 @@ describe('history', () => {
 })
 
 /** Fake exchanges: a map of date -> {nse, bse} availability, with a settable "now". */
-function world(opts: { today: string; htmlHolidays?: string[]; holidays?: string[]; nseOnly?: string[]; stale?: string[]; fail?: string[] }) {
+function world(opts: { today: string; metaFails?: boolean; htmlHolidays?: string[]; holidays?: string[]; nseOnly?: string[]; stale?: string[]; fail?: string[] }) {
   const calls: string[] = []
   const nowMs = Date.parse(`${opts.today}T14:30:00Z`)
   const dateOf = (url: string) => {
@@ -122,6 +131,9 @@ function world(opts: { today: string; htmlHolidays?: string[]; holidays?: string
   }
   const fetchText: Deps['fetchText'] = async url => {
     calls.push(url)
+    if (url.includes('niftyindices')) {
+      return opts.metaFails ? { status: 503, text: '' } : { status: 200, text: 'Company Name,Industry,Symbol,Series,ISIN Code\nAAA Industries Ltd.,Capital Goods,AAA,EQ,INE000A01000\n' }
+    }
     const d = dateOf(url)
     const isNse = url.includes('nsearchives')
     if (opts.fail?.includes(d)) return { status: 503, text: '' }
@@ -140,7 +152,17 @@ function world(opts: { today: string; htmlHolidays?: string[]; holidays?: string
     calls.push(url)
     return { status: 200, json: { data: { candles: [[`${opts.today}T00:00:00+05:30`, 1, 2, 0.5, 1.5, 0, 0], ['2026-01-02T00:00:00+05:30', 1, 2, 0.5, 1.2, 0, 0]] } } }
   }
-  return { fetchText, fetchJson, calls, now: () => nowMs }
+  // Upstox's NSE master: AAA is the NSE listing of the same company as BSE 500001 (they share an ISIN), plus a bond that must be ignored.
+  const fetchGzJson: Deps['fetchGzJson'] = async url => {
+    calls.push(url)
+    if (opts.metaFails) return { status: 503, json: null }
+    return { status: 200, json: [
+      { segment: 'NSE_EQ', instrument_type: 'EQ', trading_symbol: 'AAA', isin: 'INE000A01000', name: 'AAA INDUSTRIES LIMITED' },
+      { segment: 'NSE_EQ', instrument_type: 'SG', trading_symbol: '749RJ35', isin: 'IN2920250163', name: 'SDL RJ 7.49% 2035' },
+      { segment: 'NSE_FO', instrument_type: 'EQ', trading_symbol: 'AAA', isin: 'WRONG', name: 'derivative' },
+    ] }
+  }
+  return { fetchText, fetchJson, fetchGzJson, calls, now: () => nowMs }
 }
 
 describe('ingest', () => {
@@ -203,7 +225,7 @@ describe('ingest', () => {
     for (const d of days) await advance({ store, ...world({ today: d }) })
     const m = store.manifest()!
     expect(new Set(m.deltas.map(d => d.date)).size).toBeLessThanOrEqual(7)
-    expect(m.snapshots.NSE!.date >= '2026-10-13').toBe(true)
+    expect(m.snapshots.NSE!.date >= '2026-10-12').toBe(true) // rolled by the weekly metadata refresh at the latest
     expect([...store.files.keys()].filter(f => f.startsWith('snapshot'))).toHaveLength(2) // one per exchange, older ones removed
   })
 
@@ -262,5 +284,77 @@ describe('ingest', () => {
   it('uses the documented file URLs', () => {
     expect(nseUrl('2026-10-27')).toBe('https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_27102026.csv')
     expect(bseUrl('2026-10-27')).toBe('https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_20261027_F_0000.CSV')
+  })
+})
+
+describe('metadata: ISIN, names, industry, search list', () => {
+  it('fills NSE ISIN and name from the instrument master, industry by ISIN for both exchanges, and ignores bonds and derivatives', async () => {
+    const store = memoryStore()
+    await advance({ store, ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-27' })
+    const m = store.manifest()!
+    const nse = await store.getJson<{ stocks: Record<string, { isin?: string; name?: string; sector?: string }> }>(m.snapshots.NSE!.file)
+    const bse = await store.getJson<{ stocks: Record<string, { isin?: string; name?: string; sector?: string }> }>(m.snapshots.BSE!.file)
+    expect(nse!.stocks['NSE:AAA']).toMatchObject({ isin: 'INE000A01000', name: 'AAA INDUSTRIES LIMITED', sector: 'Capital Goods' })
+    expect(bse!.stocks['BSE:500001']).toMatchObject({ isin: 'INE000A01000', name: 'B LTD', sector: 'Capital Goods' }) // BSE's own name wins; sector by shared ISIN
+    expect(m.meta).not.toBeNull()
+  })
+
+  it('publishes a small search list covering both exchanges', async () => {
+    const store = memoryStore()
+    await advance({ store, ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-27' })
+    const idx = await store.getJson<{ items: string[][] }>(store.manifest()!.search!.file)
+    expect(idx!.items).toEqual([['NSE:AAA', 'AAA', 'AAA INDUSTRIES LIMITED', 'INE000A01000', 'Capital Goods'], ['BSE:500001', 'BBB', 'B LTD', 'INE000A01000', 'Capital Goods']].sort((a, b) => a[1].localeCompare(b[1])))
+  })
+
+  it('a failed metadata fetch never blocks prices; stocks just stay unenriched and the error is reported', async () => {
+    const store = memoryStore()
+    const r = await advance({ store, ...world({ today: '2026-10-28', metaFails: true }) }, { startDate: '2026-10-27' })
+    expect(r.applied).toEqual(['2026-10-27', '2026-10-28'])
+    expect(r.metaError).toBeTruthy()
+    expect(store.manifest()!.meta).toBeNull()
+    const nse = await store.getJson<{ stocks: Record<string, { isin?: string }> }>(store.manifest()!.snapshots.NSE!.file)
+    expect(nse!.stocks['NSE:AAA'].isin).toBeUndefined()
+  })
+
+  it('refreshing metadata with no new day rewrites the snapshots under a new revision and removes the old files', async () => {
+    const store = memoryStore()
+    await advance({ store, ...world({ today: '2026-10-28', metaFails: true }) }, { startDate: '2026-10-27' }) // published without metadata
+    const before = store.manifest()!
+    expect(before.rev).toBe(1)
+    const r = await advance({ store, ...world({ today: '2026-10-28' }) }, { refreshMeta: true })
+    expect(r.applied).toEqual([])
+    const after = store.manifest()!
+    expect(after.rev).toBe(2)
+    expect(after.snapshots.NSE!.date).toBe(before.snapshots.NSE!.date) // same day...
+    expect(after.snapshots.NSE!.file).not.toBe(before.snapshots.NSE!.file) // ...new file name, so no CDN or cache can serve the old bytes
+    expect(store.files.has(before.snapshots.NSE!.file)).toBe(false)
+    const nse = await store.getJson<{ stocks: Record<string, { sector?: string }> }>(after.snapshots.NSE!.file)
+    expect(nse!.stocks['NSE:AAA'].sector).toBe('Capital Goods')
+  })
+
+  it('daily deltas carry the metadata too, so clients that only apply deltas stay enriched', async () => {
+    const store = memoryStore()
+    await advance({ store, ...world({ today: '2026-10-27' }) }, { startDate: '2026-10-27' })
+    await advance({ store, ...world({ today: '2026-10-28' }) })
+    const m = store.manifest()!
+    const delta = await store.getJson<{ id: string; isin?: string; sector?: string }[]>(m.deltas.find(d => d.ex === 'NSE')!.file)
+    expect(delta![0]).toMatchObject({ id: 'NSE:AAA', isin: 'INE000A01000', sector: 'Capital Goods' })
+  })
+})
+
+describe('rebuild', () => {
+  it('replaces the whole published set from scratch and removes every old file', async () => {
+    const store = memoryStore()
+    await advance({ store, ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-27' })
+    const old = store.manifest()!
+    const oldFiles = [...store.files.keys()]
+    const r = await advance({ store, ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-26', rebuild: true })
+    expect(r.applied).toEqual(['2026-10-26', '2026-10-27', '2026-10-28']) // starts over, rather than continuing after the old latest day
+    const now = store.manifest()!
+    expect(now.rev).toBe(old.rev + 1)
+    const nse = await store.getJson<{ dates: string[] }>(now.snapshots.NSE!.file)
+    expect(nse!.dates).toHaveLength(3)
+    for (const f of oldFiles.filter(f => !f.startsWith('meta-'))) expect(store.files.has(f), f).toBe(false) // metadata is still valid, so it is kept
+    expect(now.meta).toEqual(old.meta)
   })
 })

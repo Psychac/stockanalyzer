@@ -18,7 +18,7 @@ import type { FyersSession } from './providers/fyers/types'
 import { BreezeClient } from './providers/breeze/client'
 import { BreezeProvider } from './providers/breeze/provider'
 import { BREEZE_INDICES } from './providers/breeze/codes'
-import { BENCHMARK_FOR, MarketUnavailable, fetchIndexBars, fetchManifest, realNet, syncExchange, toCandleSet } from './market/client'
+import { BENCHMARK_FOR, MarketUnavailable, fetchIndexBars, fetchManifest, fetchSearchIndex, realNet, syncExchange, toCandleSet, type SearchItem } from './market/client'
 import type { Exchange, History } from '../api/_lib/data/history'
 import { loadMaster } from './providers/breeze/master'
 import type { Candle } from './domain/types'
@@ -72,6 +72,9 @@ interface State {
   /** Market-wide end-of-day data from the shared backend (NSE and BSE). Held outside the store: it is large. */
   market: { status: 'idle' | 'loading' | 'ready' | 'error'; message: string | null; progress: { loaded: number; total: number } | null; date: string | null; counts: Partial<Record<Exchange, number>> }
   scan: { done: number; total: number; label: string } | null
+  /** Every liquid NSE and BSE stock (symbol, name, ISIN, industry), for search and sector filters. Loaded on demand, tens of KB. */
+  searchIndex: SearchItem[] | null
+  marketSectors: string[]
   userScanners: ScannerConfig[]
   shortlist: ShortlistItem[]
   settings: Settings
@@ -84,7 +87,11 @@ interface State {
   openStock: (row: MasterRow | { symbol: string }) => Promise<void>
   loadMarket: () => Promise<void>
   loadMarketData: (exchanges: Exchange[]) => Promise<boolean>
-  runMarketScan: (cfg: ScannerConfig, universe: 'NSE' | 'BSE' | 'ALL') => Promise<void>
+  /** `listedOnce` skips a BSE listing when the same company (by ISIN) is also on NSE, so "Both" does not count it twice. */
+  runMarketScan: (cfg: ScannerConfig, universe: 'NSE' | 'BSE' | 'ALL', opts?: { listedOnce?: boolean }) => Promise<void>
+  loadSearchIndex: () => Promise<void>
+  /** Open any market stock. If its exchange's data is not on this device yet, download it first (about 6 MB, once). */
+  openMarketStock: (id: string) => Promise<void>
   /** Candles for any stock the app can show: tracked, opened from search, or in the market-wide data. */
   setFor: (id: string) => CandleSet | undefined
   setSource: (s: DataSource) => Promise<void>
@@ -167,6 +174,7 @@ export const useApp = create<State>((set, get) => {
   const marketDate: Partial<Record<Exchange, string>> = {}
   let nseNames: Map<string, string> | undefined
   let scanRunning = false
+  let searchLoading = false
 
   function recomputeIndices(now = Date.now()) {
     const ticks = new Map((streaming?.liveIndices() ?? []).map(t => [t.id, t]))
@@ -279,6 +287,8 @@ export const useApp = create<State>((set, get) => {
     indexLevels: [],
     market: { status: 'idle', message: null, progress: null, date: null, counts: {} },
     scan: null,
+    searchIndex: null,
+    marketSectors: [],
     userScanners: [],
     shortlist: [],
     settings: DEFAULT_SETTINGS,
@@ -288,6 +298,7 @@ export const useApp = create<State>((set, get) => {
       window.addEventListener('hashchange', () => set({ route: fromHash() }))
       await get().reloadUserData()
       indicesReady = loadMarketIndices()
+      void get().loadSearchIndex()
       // Shortlisted stocks from the market-wide data need that data to show prices; read it from this device, no download.
       const wantEx = [...new Set(get().shortlist.map(s => s.instrumentId).filter(id => id.startsWith('BSE:') || (id.startsWith('NSE:') && !UNIVERSE.some(u => u.id === id))).map(id => id.slice(0, 3) as Exchange))]
       if (wantEx.length) void loadCachedMarket(wantEx)
@@ -488,6 +499,7 @@ export const useApp = create<State>((set, get) => {
         }
         nseNames ??= await loadMaster().then(rows => new Map(rows.map(r => [r.symbol, r.name]))).catch(() => new Map<string, string>())
         set({ market: { status: 'ready', message: null, progress: null, date: m.latestDate, counts: countsOf() } })
+        void get().loadSearchIndex()
         return true
       } catch (e) {
         // Offline or the service is down: a copy already on this device is still useful, and is labelled as such.
@@ -506,7 +518,31 @@ export const useApp = create<State>((set, get) => {
       }
     },
 
-    async runMarketScan(cfg, universe) {
+    async loadSearchIndex() {
+      if (get().searchIndex || searchLoading) return
+      searchLoading = true
+      try {
+        const idx = await fetchSearchIndex(await fetchManifest())
+        if (idx) set({ searchIndex: idx.items, marketSectors: [...new Set(idx.items.map(i => i[4]).filter(Boolean))].sort() })
+      } catch { /* search falls back to tracked stocks, and Breeze's list when connected */ } finally { searchLoading = false }
+    },
+
+    async openMarketStock(id) {
+      if (get().sets.has(id) || get().extras.has(id)) return get().openChart(id)
+      const ex = id.slice(0, 3) as Exchange
+      if (marketHist[ex]) return get().openChart(id)
+      set({ chartSymbol: id, extraStatus: { id, state: 'loading' } })
+      get().go('charts')
+      if (!(await get().loadMarketData([ex]))) {
+        set({ extraStatus: { id, state: 'error', message: get().market.message ?? 'Market data is not available.' } })
+        return
+      }
+      const cs = toCandleSet(marketHist[ex]!, id, nseNames)
+      if (!cs) { set({ extraStatus: { id, state: 'error', message: `${id.replace(/^\w+:/, '')} has no recent end-of-day data.` } }); return }
+      set({ extras: new Map(get().extras).set(id, cs), extraStatus: null })
+    },
+
+    async runMarketScan(cfg, universe, opts) {
       if (scanRunning) return
       const exs: Exchange[] = universe === 'ALL' ? ['NSE', 'BSE'] : [universe]
       scanRunning = true
@@ -517,8 +553,14 @@ export const useApp = create<State>((set, get) => {
           return c ? { instrument: { id: BENCHMARK_FOR[ex], exchange: ex, symbol: BENCHMARK_FOR[ex], name: 'Benchmark', sector: 'Index', kind: 'index' }, timeframe: '1D', candles: c, source: 'market', asOf: c[c.length - 1].t } : null
         }
         const benches: Record<Exchange, CandleSet | null> = { NSE: bench('NSE'), BSE: bench('BSE') }
-        const ids = exs.flatMap(ex => Object.keys(marketHist[ex]!.stocks))
-        const label = universe === 'ALL' ? 'All NSE + BSE' : `All ${universe}`
+        let ids = exs.flatMap(ex => Object.keys(marketHist[ex]!.stocks))
+        let label = universe === 'ALL' ? 'All NSE + BSE' : `All ${universe}`
+        if (universe === 'ALL' && opts?.listedOnce) {
+          // Prefer the NSE listing (deeper liquidity); drop a BSE twin that shares its ISIN.
+          const nseIsins = new Set(Object.values(marketHist.NSE!.stocks).map(s => s.isin).filter(Boolean))
+          ids = ids.filter(id => id.startsWith('NSE:') || !nseIsins.has(marketHist.BSE!.stocks[id].isin))
+          label += ' (each company once)'
+        }
         set({ scan: { done: 0, total: ids.length, label } })
         const run = await runScannerLazy(cfg, {
           ids, label, source: 'market',

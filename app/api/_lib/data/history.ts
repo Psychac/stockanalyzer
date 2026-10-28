@@ -14,6 +14,8 @@ export interface DayRow {
   sym: string
   isin?: string
   name?: string
+  /** Industry, when a free list knows it (about a third of liquid stocks). */
+  sector?: string
   o: number; h: number; l: number; c: number
   /** Previous close, paise, as reported by the exchange for that day. */
   pc: number
@@ -26,6 +28,7 @@ export interface Stock {
   sym: string
   isin?: string
   name?: string
+  sector?: string
   o: number[]; h: number[]; l: number[]; c: number[]; v: number[]
 }
 
@@ -99,11 +102,12 @@ export function applyDay(h: History, date: string, rows: DayRow[]): boolean {
     let s = h.stocks[r.id]
     if (!s && turnover(r.c, r.v) < ADMIT_TURNOVER) continue
     if (!s) {
-      s = h.stocks[r.id] = { id: r.id, ex: r.ex, sym: r.sym, isin: r.isin, name: r.name, o: new Array(n).fill(0), h: new Array(n).fill(0), l: new Array(n).fill(0), c: new Array(n).fill(0), v: new Array(n).fill(0) }
+      s = h.stocks[r.id] = { id: r.id, ex: r.ex, sym: r.sym, isin: r.isin, name: r.name, sector: r.sector, o: new Array(n).fill(0), h: new Array(n).fill(0), l: new Array(n).fill(0), c: new Array(n).fill(0), v: new Array(n).fill(0) }
     } else {
       s.sym = r.sym
       if (r.isin) s.isin = r.isin
       if (r.name) s.name = r.name
+      if (r.sector) s.sector = r.sector
       const last = lastNonZero(s.c)
       if (last > 0 && r.pc > 0) {
         const ratio = r.pc / last

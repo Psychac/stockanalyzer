@@ -63,6 +63,13 @@ export function parseNse(csv: string): Parsed | null {
   return { date, rows: out }
 }
 
+/**
+ * The BSE file lists every instrument as "STK", including mutual funds, ETFs, government securities and corporate bonds. Real
+ * shares sit in a handful of series (A, B, T, X, XT, Z, plus SME M, MT, MS) and have ISINs starting INE; funds are INF and
+ * bonds are series F/G/IF, which this excludes.
+ */
+const BSE_SHARE_SERIES = new Set(['A', 'B', 'T', 'X', 'XT', 'Z', 'M', 'MT', 'MS', 'P', 'E'])
+
 /** BSE `BhavCopy_BSE_CM_..._F_0000`: equity (STK) rows keyed by scrip code, since BSE symbols are reused and renamed. */
 export function parseBse(csv: string): Parsed | null {
   const { col, rows } = table(csv)
@@ -72,6 +79,8 @@ export function parseBse(csv: string): Parsed | null {
   let date: string | null = null
   for (const r of rows) {
     if (r[col.FinInstrmTp] !== 'STK') continue
+    if ('SctySrs' in col && !BSE_SHARE_SERIES.has(r[col.SctySrs])) continue
+    if ('ISIN' in col && !r[col.ISIN].startsWith('INE')) continue
     const [o, h, l, c, pc] = [r[col.OpnPric], r[col.HghPric], r[col.LwPric], r[col.ClsPric], r[col.PrvsClsgPric]].map(paise)
     if (!(o && h && l && c) || h < l) continue
     date ??= /^\d{4}-\d{2}-\d{2}$/.test(r[col.TradDt]) ? r[col.TradDt] : null

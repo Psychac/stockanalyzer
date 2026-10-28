@@ -42,7 +42,7 @@ export function Charts() {
       <>
         <PageHeader title="Charts" />
         {extraStatus.state === 'loading'
-          ? <><p className="mb-3 text-sm text-mute">Loading {sym} from Breeze…</p><Skeleton className="h-[420px]" /></>
+          ? <><p className="mb-3 text-sm text-mute">Loading {sym}… the first stock from an exchange downloads its end-of-day data once (about 6 MB).</p><Skeleton className="h-[420px]" /></>
           : <NoData />}
         {extraStatus.state === 'error' && <p className="mt-3 text-sm text-down">{extraStatus.message}</p>}
       </>
@@ -109,6 +109,10 @@ export function Charts() {
               <dl className="num mt-4 grid grid-cols-2 gap-x-4 gap-y-2.5 text-sm">
                 <Row k={plan.state === 'setup_forming' && plan.level ? 'Trigger' : active ? 'Entry' : 'Reference entry'} v={`₹${price(plan.entry)}`} />
                 <Row k="Entry zone" v={`${price(plan.entryZone[0])}–${price(plan.entryZone[1])}`} />
+                <Row k="Timeframe" v={plan.timeframe === '1D' ? 'Daily (1D)' : plan.timeframe} />
+                <Row k="Typical hold" v={plan.holding} />
+                <Row k="Signal bar" v={dateOnly(plan.asOf)} />
+                <Row k={active ? 'Valid until' : 'Would expire'} v={`~${dateOnly(plan.validUntil)}`} />
                 <Row k="Stop-loss" v={`₹${price(plan.stop)}`} cls="text-down" />
                 <Row k="Risk / share" v={`₹${price(plan.riskPerShare)}`} />
                 {plan.targets.map(t => <Row key={t.rr} k={`Target ${t.rr}R`} v={`₹${price(t.price)}`} cls="text-up" />)}

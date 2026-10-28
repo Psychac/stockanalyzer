@@ -3,29 +3,43 @@ import { useApp } from '../../store'
 import { UNIVERSE } from '../../providers/universe'
 import { loadMaster, rankMatches, type MasterRow } from '../../providers/breeze/master'
 
-type Hit = { symbol: string; name: string; tracked: boolean; row?: MasterRow }
+type Hit = {
+  id: string
+  symbol: string
+  name: string
+  ex: 'NSE' | 'BSE'
+  /** Where the price data comes from if you open it. */
+  kind: 'tracked' | 'market' | 'breeze'
+  sector?: string
+  row?: MasterRow
+}
+
+const KIND_LABEL: Record<Hit['kind'], string> = { tracked: 'Tracked', market: 'End-of-day', breeze: 'On demand' }
 
 /**
- * Global stock search. On Breeze it searches every NSE equity (the instrument master loads on first use) and opens a
- * stock outside the tracked 50 by fetching its history on demand. On other sources it searches the tracked stocks only.
+ * Global stock search across NSE and BSE. The market list (every liquid stock on both exchanges) is a small file, so searching
+ * costs no price download. Opening a stock outside the tracked 50 then loads that exchange's data once (about 6 MB, cached),
+ * or, for NSE stocks when Breeze is connected, fetches just that stock.
  */
 export function SearchBox() {
-  const source = useApp(s => s.source)
-  const sessionOn = useApp(s => !!s.breeze.session)
+  const sessionOn = useApp(s => !!s.breeze.session && s.source === 'breeze')
+  const index = useApp(s => s.searchIndex)
+  const loadSearchIndex = useApp(s => s.loadSearchIndex)
   const openChart = useApp(s => s.openChart)
   const openStock = useApp(s => s.openStock)
+  const openMarketStock = useApp(s => s.openMarketStock)
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
   const [cursor, setCursor] = useState(0)
   const [master, setMaster] = useState<MasterRow[] | null>(null)
-  const [masterError, setMasterError] = useState(false)
   const box = useRef<HTMLDivElement>(null)
-  const all = source === 'breeze' && sessionOn
 
   useEffect(() => {
-    if (!all || !open || master || masterError) return
-    loadMaster().then(setMaster).catch(() => setMasterError(true))
-  }, [all, open, master, masterError])
+    if (!open) return
+    void loadSearchIndex()
+    // Breeze's own NSE list also covers illiquid names the market list leaves out.
+    if (sessionOn && !master) loadMaster().then(setMaster).catch(() => setMaster([]))
+  }, [open, sessionOn, master, loadSearchIndex])
 
   useEffect(() => {
     const away = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
@@ -33,18 +47,29 @@ export function SearchBox() {
     return () => document.removeEventListener('mousedown', away)
   }, [])
 
-  const trackedIds = useMemo(() => new Set(UNIVERSE.map(i => i.symbol)), [])
-  const hits = useMemo<Hit[]>(() => {
-    if (!q.trim()) return []
-    if (all && master) return rankMatches(master, q, r => r.symbol, r => r.name, 8).map(r => ({ symbol: r.symbol, name: r.name, tracked: trackedIds.has(r.symbol), row: r }))
-    return rankMatches(UNIVERSE, q, i => i.symbol, i => i.name, 8).map(i => ({ symbol: i.symbol, name: i.name, tracked: true }))
-  }, [q, all, master, trackedIds])
+  const all = useMemo<Hit[]>(() => {
+    const tracked = new Set(UNIVERSE.map(i => `NSE:${i.symbol}`))
+    const out = new Map<string, Hit>()
+    for (const i of UNIVERSE) out.set(`NSE:${i.symbol}`, { id: `NSE:${i.symbol}`, symbol: i.symbol, name: i.name, ex: 'NSE', kind: 'tracked', sector: i.sector })
+    for (const [id, symbol, name, , sector] of index ?? []) {
+      if (out.has(id)) continue
+      out.set(id, { id, symbol, name: name || symbol, ex: id.startsWith('BSE:') ? 'BSE' : 'NSE', kind: 'market', sector: sector || undefined })
+    }
+    for (const r of master ?? []) {
+      const id = `NSE:${r.symbol}`
+      if (!out.has(id) && !tracked.has(id)) out.set(id, { id, symbol: r.symbol, name: r.name, ex: 'NSE', kind: 'breeze', row: r })
+    }
+    return [...out.values()]
+  }, [index, master])
+
+  const hits = useMemo(() => (q.trim() ? rankMatches(all, q, h => h.symbol, h => h.name, 10) : []), [q, all])
 
   const pick = (h: Hit) => {
     setOpen(false)
     setQ('')
-    if (h.tracked || !h.row) openChart(`NSE:${h.symbol}`)
-    else void openStock(h.row)
+    if (h.kind === 'tracked') openChart(h.id)
+    else if (h.kind === 'breeze' && h.row) void openStock(h.row)
+    else void openMarketStock(h.id)
   }
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -62,31 +87,33 @@ export function SearchBox() {
         </svg>
         <input
           className="field !pl-9" type="search" inputMode="search" autoComplete="off" autoCapitalize="characters" spellCheck={false}
-          placeholder={all ? 'Search any NSE stock' : 'Search tracked stocks'} aria-label="Search stocks"
+          placeholder="Search NSE and BSE stocks" aria-label="Search stocks"
           value={q} onFocus={() => setOpen(true)} onKeyDown={onKey}
           onChange={e => { setQ(e.target.value); setOpen(true); setCursor(0) }}
         />
       </div>
       {open && q.trim() && (
-        <ul className="card absolute inset-x-0 top-full z-40 mt-1.5 max-h-80 overflow-y-auto !bg-panel p-1 shadow-2xl" role="listbox">
-          {all && !master && !masterError && <li className="px-3 py-3 text-xs text-mute">Loading the NSE stock list…</li>}
-          {masterError && <li className="px-3 py-3 text-xs text-warn">Could not load the full stock list. Searching tracked stocks only.</li>}
+        <ul className="card absolute inset-x-0 top-full z-40 mt-1.5 max-h-96 overflow-y-auto !bg-panel p-1 shadow-2xl" role="listbox">
+          {!index && <li className="px-3 py-2 text-xs text-mute">Loading the NSE and BSE stock list…</li>}
           {hits.map((h, i) => (
-            <li key={h.symbol} role="option" aria-selected={i === cursor}>
+            <li key={h.id} role="option" aria-selected={i === cursor}>
               <button
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left ${i === cursor ? 'bg-panel2' : 'hover:bg-panel2/60'}`}
                 onMouseEnter={() => setCursor(i)} onClick={() => pick(h)}
               >
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium">{h.symbol}</span>
-                  <span className="block truncate text-xs text-mute">{h.name}</span>
+                  <span className="block truncate text-xs text-mute">{h.name}{h.sector ? ` · ${h.sector}` : ''}</span>
                 </span>
-                {all && <span className={`chip !py-0 text-[10px] ${h.tracked ? '' : 'text-accent'}`}>{h.tracked ? 'Tracked' : 'On demand'}</span>}
+                <span className="flex shrink-0 flex-col items-end gap-1">
+                  <span className={`chip !py-0 text-[10px] ${h.ex === 'BSE' ? 'text-warn' : 'text-accent'}`}>{h.ex}</span>
+                  <span className="text-[10px] text-mute">{KIND_LABEL[h.kind]}</span>
+                </span>
               </button>
             </li>
           ))}
-          {hits.length === 0 && (!all || master) && <li className="px-3 py-3 text-xs text-mute">No match. Try a symbol or part of the company name.</li>}
-          {!all && <li className="border-t border-line/60 px-3 py-2 text-[11px] text-mute">Only the tracked stocks can be searched on this data source. Connect ICICI Breeze to search every NSE stock.</li>}
+          {hits.length === 0 && index && <li className="px-3 py-3 text-xs text-mute">No match. Try a symbol or part of the company name.</li>}
+          {hits.length > 0 && !index && <li className="border-t border-line/60 px-3 py-2 text-[11px] text-mute">Showing tracked stocks only: the full list could not be loaded.</li>}
         </ul>
       )}
     </div>

@@ -1,5 +1,7 @@
+import { gunzipSync } from 'node:zlib'
 import { admissible, applyDay, emptyHistory, mergeHistories, prune, sliceOf, type DayRow, type History } from './history.js'
 import { parseBse, parseNse, type Parsed } from './parse.js'
+import { buildSearchIndex, enrichHistory, enrichRow, INDUSTRY_LISTS, parseIndustryCsv, parseUpstoxNse, UPSTOX_NSE_MASTER, type Meta } from './meta.js'
 import { emptyManifest, type Manifest, type Store } from './store.js'
 
 /**
@@ -14,6 +16,8 @@ export interface Deps {
   store: Store
   fetchText: (url: string) => Promise<Fetched>
   fetchJson: (url: string) => Promise<{ status: number; json: unknown }>
+  /** A gzipped JSON file served as plain bytes. */
+  fetchGzJson: (url: string) => Promise<{ status: number; json: unknown }>
   now: () => number
 }
 
@@ -23,6 +27,10 @@ export interface Options {
   /** First session to fetch when starting from nothing. */
   startDate?: string
   maxDays?: number
+  /** Re-fetch company metadata and rewrite the snapshots even when there is no new day. */
+  refreshMeta?: boolean
+  /** Throw away the published history and rebuild it from the start (one time, after the rules for what to include change). */
+  rebuild?: boolean
 }
 
 export interface Result {
@@ -30,6 +38,8 @@ export interface Result {
   skipped: string[]
   /** Why it stopped early, if it did. */
   stopped: string | null
+  /** Set when metadata could not be refreshed; prices are unaffected. */
+  metaError?: string
   latestDate: string | null
   wrote: string[]
 }
@@ -92,6 +102,22 @@ async function load(store: Store, m: Manifest): Promise<History> {
   return out
 }
 
+async function fetchMeta(deps: Deps, date: string): Promise<Meta> {
+  const nseRes = await deps.fetchGzJson(UPSTOX_NSE_MASTER)
+  if (nseRes.status !== 200) throw new Error(`Upstox instrument master: HTTP ${nseRes.status}`)
+  const nse = parseUpstoxNse(nseRes.json)
+  if (!Object.keys(nse).length) throw new Error('Upstox instrument master had no NSE equities')
+  const sector: Meta['sector'] = {}
+  for (const url of INDUSTRY_LISTS) {
+    try {
+      const r = await deps.fetchText(url)
+      const parsed = r.status === 200 ? parseIndustryCsv(r.text) : null
+      if (parsed) Object.assign(sector, parsed)
+    } catch { /* industries are optional */ }
+  }
+  return { date, nse, sector }
+}
+
 async function fetchIndices(deps: Deps, date: string): Promise<IndexFile> {
   const from = addDays(date, -400)
   const items: IndexFile['items'] = []
@@ -111,9 +137,18 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   const t0 = deps.now()
   const budget = opts.budgetMs ?? 200_000
   const today = istDay(t0)
-  const m = (await deps.store.getManifest()) ?? emptyManifest()
+  const previous = (await deps.store.getManifest()) ?? emptyManifest()
+  const m: Manifest = opts.rebuild ? { ...emptyManifest(), rev: previous.rev, meta: previous.meta, urls: {} } : previous
   const h = await load(deps.store, m)
+  let meta: Meta | null = m.meta ? await deps.store.getJson<Meta>(m.meta.file) : null
+  let metaFresh = false
+  const metaAgeDays = meta ? (t0 - Date.parse(`${meta.date}T00:00:00Z`)) / DAY : Infinity
+  const metaError: { v?: string } = {}
+  if (opts.refreshMeta || metaAgeDays > 7) {
+    try { meta = await fetchMeta(deps, today); metaFresh = true } catch (e) { metaError.v = e instanceof Error ? e.message : String(e) }
+  }
   const res: Result = { applied: [], skipped: [], stopped: null, latestDate: m.latestDate, wrote: [] }
+  if (metaError.v) res.metaError = metaError.v
   const newDays: { date: string; rows: DayRow[] }[] = []
 
   let d = m.latestDate ? addDays(m.latestDate, 1) : opts.startDate ?? addDays(today, -380)
@@ -123,7 +158,7 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     const [nse, bse] = await Promise.all([fetchDay(deps, nseUrl(d), parseNse, d), fetchDay(deps, bseUrl(d), parseBse, d)])
     const err = nse.kind === 'error' ? nse : bse.kind === 'error' ? bse : null
     if (err && err.kind === 'error') { res.stopped = `${d}: ${err.why}`; break }
-    const rows = [...(nse.kind === 'rows' ? nse.rows : []), ...(bse.kind === 'rows' ? bse.rows : [])]
+    const rows = [...(nse.kind === 'rows' ? nse.rows : []), ...(bse.kind === 'rows' ? bse.rows : [])].map(r => enrichRow(r, meta))
     const recent = d >= addDays(today, -1)
     if (!rows.length) {
       // Both missing: a holiday if it is past, or simply not published yet if it is today.
@@ -139,23 +174,45 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     res.latestDate = d
   }
 
-  if (!newDays.length) return res
+  if (!newDays.length && !metaFresh) return res
+  if (metaFresh && meta) enrichHistory(h, meta)
 
   const urls = { ...m.urls }
+  const rev = m.rev + 1
   const next: Manifest = { ...m, latestDate: res.latestDate, updatedAt: new Date(deps.now()).toISOString(), urls }
   const stale: string[] = []
-  const foldIntoSnapshot = !m.snapshots.NSE || newDays.length > 3 || new Set(m.deltas.map(x => x.date)).size + newDays.length > 7
+  const foldIntoSnapshot = metaFresh || !m.snapshots.NSE || newDays.length > 3 || new Set(m.deltas.map(x => x.date)).size + newDays.length > 7
   if (foldIntoSnapshot) {
     prune(h)
     next.snapshots = {}
     for (const ex of ['NSE', 'BSE'] as const) {
-      const file = `snapshot-${ex}-${res.latestDate}.json.gz`
+      const file = `snapshot-${ex}-${res.latestDate}-r${rev}.json.gz`
       urls[file] = await deps.store.putJson(file, sliceOf(h, ex))
       res.wrote.push(file)
-      next.snapshots[ex] = { file, date: res.latestDate! }
+      next.snapshots[ex] = { file, date: res.latestDate!, rev }
+    }
+    const searchFile = `search-${res.latestDate}-r${rev}.json.gz`
+    urls[searchFile] = await deps.store.putJson(searchFile, buildSearchIndex(h))
+    res.wrote.push(searchFile)
+    if (m.search) stale.push(m.search.file)
+    next.search = { file: searchFile, date: res.latestDate!, rev }
+    next.rev = rev
+    if (metaFresh && meta) {
+      const metaFile = `meta-${meta.date}-r${rev}.json.gz`
+      urls[metaFile] = await deps.store.putJson(metaFile, meta)
+      res.wrote.push(metaFile)
+      if (m.meta) stale.push(m.meta.file)
+      next.meta = { file: metaFile, date: meta.date, rev }
     }
     for (const r of Object.values(m.snapshots)) if (r) stale.push(r.file)
     stale.push(...m.deltas.map(x => x.file))
+    if (opts.rebuild) {
+      // The old published set is replaced wholesale.
+      for (const r of Object.values(previous.snapshots)) if (r) stale.push(r.file)
+      stale.push(...previous.deltas.map(x => x.file))
+      if (previous.search) stale.push(previous.search.file)
+      if (previous.indices) stale.push(previous.indices.file)
+    }
     next.deltas = []
   } else {
     next.deltas = [...m.deltas]
@@ -171,7 +228,7 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     }
   }
 
-  const ix = await fetchIndices(deps, res.latestDate!)
+  const ix = newDays.length ? await fetchIndices(deps, res.latestDate!) : { date: res.latestDate!, items: [] }
   if (ix.items.length) {
     const file = `indices-${ix.date}.json.gz`
     urls[file] = await deps.store.putJson(file, ix)
@@ -193,8 +250,26 @@ export const realDeps = (store: Store): Deps => ({
   store,
   now: () => Date.now(),
   fetchText: async url => {
-    const r = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; stock-analyzer-ingest)', accept: '*/*' }, signal: AbortSignal.timeout(20_000) })
-    return { status: r.status, text: r.status === 200 ? await r.text() : (await r.body?.cancel(), '') }
+    // The exchange archives are slow or flaky at times; a couple of quick retries on timeouts and 5xx saves a whole restart.
+    let last: unknown
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; stock-analyzer-ingest)', accept: '*/*' }, signal: AbortSignal.timeout(15_000) })
+        if (r.status >= 500) { await r.body?.cancel(); last = new Error(`HTTP ${r.status}`); await new Promise(res => setTimeout(res, 800 * (attempt + 1))); continue }
+        return { status: r.status, text: r.status === 200 ? await r.text() : (await r.body?.cancel(), '') }
+      } catch (e) {
+        last = e
+        await new Promise(res => setTimeout(res, 800 * (attempt + 1)))
+      }
+    }
+    throw last instanceof Error ? last : new Error(String(last))
+  },
+  fetchGzJson: async url => {
+    const r = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; stock-analyzer-ingest)' }, signal: AbortSignal.timeout(60_000) })
+    if (r.status !== 200) { await r.body?.cancel(); return { status: r.status, json: null } }
+    const buf = Buffer.from(await r.arrayBuffer())
+    const raw = buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf) : buf
+    return { status: 200, json: JSON.parse(raw.toString('utf8')) }
   },
   fetchJson: async url => {
     const r = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20_000) })

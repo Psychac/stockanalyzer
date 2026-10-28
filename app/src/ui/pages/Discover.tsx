@@ -42,7 +42,7 @@ function ResultRow({ r, source }: { r: ScanResult; source: string }) {
       <div className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition hover:bg-panel2/40" onClick={() => setOpen(!open)}>
         <ScoreRing score={r.matched ? r.score : null} />
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2"><span className="truncate font-semibold">{r.symbol}</span><span className="chip hidden !py-0 text-[10px] sm:inline-flex">{r.sector}</span></div>
+          <div className="flex min-w-0 items-center gap-2"><span className="truncate font-semibold">{r.symbol}</span><span className={`chip !py-0 text-[10px] ${r.instrumentId.startsWith('BSE:') ? 'text-warn' : 'text-accent'}`}>{r.instrumentId.startsWith('BSE:') ? 'BSE' : 'NSE'}</span><span className="chip hidden !py-0 text-[10px] sm:inline-flex">{r.sector}</span></div>
           <div className="truncate text-xs text-mute">{r.excludedBy ? `Excluded: ${r.excludedBy}` : r.name}</div>
         </div>
         <div className="num text-right"><div className="text-sm">₹{price(r.close)}</div><div className={`text-xs ${tone(r.changePct)}`}>{pct(r.changePct)}</div></div>
@@ -98,6 +98,8 @@ export function Discover() {
     try { const v = localStorage.getItem('scanUniverse'); return v === 'NSE' || v === 'BSE' || v === 'ALL' ? v : 'tracked' } catch { return 'tracked' }
   })
   const [limit, setLimit] = useState(100)
+  const [listedOnce, setListedOnce] = useState(() => { try { return localStorage.getItem('listedOnce') !== '0' } catch { return true } })
+  const pickListedOnce = (v: boolean) => { setListedOnce(v); try { localStorage.setItem('listedOnce', v ? '1' : '0') } catch { /* not persisted */ } }
   const pickUniverse = (u: Universe) => { setUniverse(u); try { localStorage.setItem('scanUniverse', u) } catch { /* not persisted */ } }
   const [note, setNote] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -106,7 +108,9 @@ export function Discover() {
   const sel = scanners.find(s => s.id === selId) ?? scanners[0]
   const lastRun = runs[sel.id]
   const stale = lastRun && lastRun.scannerVersion !== sel.version
-  const sectors = useMemo(() => [...new Set(instruments.map(i => i.sector))].sort(), [instruments])
+  const marketSectors = useApp(s => s.marketSectors)
+  // Tracked stocks and the market-wide list name sectors differently; both are offered, and a stock matches on its own name.
+  const sectors = useMemo(() => [...new Set([...instruments.map(i => i.sector), ...marketSectors])].sort(), [instruments, marketSectors])
   const matches = lastRun?.results.filter(r => r.matched) ?? []
   const shown = lastRun?.matchesOnly || !showAll ? matches : lastRun?.results ?? []
   const visible = shown.slice(0, limit)
@@ -116,7 +120,7 @@ export function Discover() {
   const scanning = !!scan || market.status === 'loading'
   const onRun = () => {
     setLimit(100)
-    if (marketScan) void runMarketScan(sel, universe)
+    if (marketScan) void runMarketScan(sel, universe, { listedOnce })
     else run(sel)
     // On a phone the results sit below the fold; bring them into view.
     if (window.innerWidth < 1024) setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
@@ -217,7 +221,7 @@ export function Discover() {
                 Universe: NSE · {sel.universe.minPrice !== null && `price ≥ ₹${sel.universe.minPrice} · `}{sel.universe.minAvgTradedValueCr !== null && `traded ≥ ₹${sel.universe.minAvgTradedValueCr} Cr/day · `}{sel.universe.sectors.length ? sel.universe.sectors.join(', ') : 'all sectors'}
               </p>
             </details>
-            <UniversePicker universe={universe} onPick={pickUniverse} />
+            <UniversePicker universe={universe} onPick={pickUniverse} listedOnce={listedOnce} onListedOnce={pickListedOnce} />
             {marketScan && <MarketNote />}
             {blocked && <p className="mt-3 rounded-lg border border-warn/30 bg-warn/5 p-2.5 text-xs text-warn">{blocked}. This preset is shown for completeness and cannot run on the demo data source.</p>}
           </section>
@@ -254,7 +258,7 @@ export function Discover() {
 
 type Universe = 'tracked' | 'NSE' | 'BSE' | 'ALL'
 
-function UniversePicker({ universe, onPick }: { universe: Universe; onPick: (u: Universe) => void }) {
+function UniversePicker({ universe, onPick, listedOnce, onListedOnce }: { universe: Universe; onPick: (u: Universe) => void; listedOnce: boolean; onListedOnce: (v: boolean) => void }) {
   const counts = useApp(s => s.market.counts)
   const opts: { key: Universe; label: string; hint?: string }[] = [
     { key: 'tracked', label: 'Tracked 50', hint: 'live source' },
@@ -273,6 +277,12 @@ function UniversePicker({ universe, onPick }: { universe: Universe; onPick: (u: 
           </button>
         ))}
       </div>
+      {universe === 'ALL' && (
+        <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-mute">
+          <input type="checkbox" className="mt-0.5 accent-[var(--color-accent)]" checked={listedOnce} onChange={e => onListedOnce(e.target.checked)} />
+          <span>Count each company once. A company listed on both exchanges (same ISIN) is shown only as its NSE listing, so results are not doubled.</span>
+        </label>
+      )}
     </div>
   )
 }
@@ -280,10 +290,13 @@ function UniversePicker({ universe, onPick }: { universe: Universe; onPick: (u: 
 /** Explains what a market-wide scan uses, and what it costs the first time. */
 function MarketNote() {
   const market = useApp(s => s.market)
+  const index = useApp(s => s.searchIndex)
+  const withSector = index ? index.filter(i => i[4]).length : 0
   return (
     <div className="mt-3 rounded-lg border border-line/70 bg-bg/40 p-2.5 text-xs text-mute">
       Uses end-of-day data from your shared backend (NSE and BSE files, liquid stocks only), screened on this device. The first scan downloads
-      about 6 MB per exchange once; after that only each day&rsquo;s small update is fetched. Stocks outside the tracked 50 have no live prices, and sectors are not available for them.
+      about 6 MB per exchange once; after that only each day&rsquo;s small update is fetched. Stocks outside the tracked 50 have no live prices.
+      {index && <span> Industry is known for {withSector.toLocaleString('en-IN')} of {index.length.toLocaleString('en-IN')} stocks (the free Nifty list, mostly the largest companies); the rest are Unclassified, so choosing a sector leaves them out.</span>}
       {market.date && <span className="text-ink"> Data as of {market.date}.</span>}
       {market.status === 'error' && market.message && <span className="mt-1 block text-down">{market.message}</span>}
       {market.status === 'ready' && market.message && <span className="mt-1 block text-warn">{market.message}</span>}

@@ -24,7 +24,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   if (given.length !== want.length || !timingSafeEqual(given, want)) return send(res, 401, { error: 'unauthorized' })
   if (!process.env.BLOB_READ_WRITE_TOKEN) return send(res, 503, { error: 'No Blob store is connected to this project (BLOB_READ_WRITE_TOKEN is missing).' })
   try {
-    const r = await advance(realDeps(blobStore()), { budgetMs: 240_000 })
+    // ?refreshMeta=1 re-fetches company metadata (ISIN, names, industries) and rewrites the snapshots even with no new day.
+    const refreshMeta = new URL(req.url ?? '', 'http://x').searchParams.get('refreshMeta') === '1'
+    const r = await advance(realDeps(blobStore()), { budgetMs: 240_000, refreshMeta, rebuild: new URL(req.url ?? '', 'http://x').searchParams.get('rebuild') === '1' })
     send(res, 200, r)
   } catch (e) {
     send(res, 500, { error: e instanceof Error ? e.message : String(e) })

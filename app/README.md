@@ -67,6 +67,13 @@ work with any data source, including none.
 - Only liquid stocks are included (about 2,400 per exchange), and large scans keep just the matches. Stocks outside the tracked 50
   have end-of-day prices only and no sector.
 - The index strip (Nifty 50, Bank Nifty, ..., **Sensex**, BSE 500, Bankex) comes from the same backend. It is hidden on demo data.
+- **Search** covers every liquid NSE and BSE stock from a small list (tens of KB), without downloading prices. Opening a stock
+  loads that exchange's data once. BSE listings show as BSE, and a company on both exchanges appears as two entries.
+- **Both** has a "count each company once" option (on by default): a BSE listing is skipped when the same company (same ISIN) is
+  on NSE. On real data this removed about 1,600 of 4,600 stocks.
+- **Sectors** come from the free Nifty Total Market list (about 750 companies), matched by ISIN, so only about a third of stocks
+  have an industry. The rest are Unclassified, and choosing a sector leaves them out.
+- The backend filters BSE to real shares (series A, B, T, X, XT, Z and SME, ISIN starting INE), dropping ETFs, funds and bonds.
 - Backend setup (Blob store, `CRON_SECRET`, first backfill) is in [`../docs/backend-design.md`](../docs/backend-design.md).
 - `npm run dev` proxies `/api/data` to the deployed site; set `MARKET_DATA_ORIGIN` to use another deployment.
 

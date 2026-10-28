@@ -5,9 +5,11 @@ import { sessionOpen } from '../domain/time'
 /** What `GET /api/data/manifest` returns. Mirrors the server's type (which cannot be imported: it pulls in Node modules). */
 export interface Manifest {
   latestDate: string | null
-  snapshots: Partial<Record<Exchange, { file: string; date: string }>>
+  snapshots: Partial<Record<Exchange, { file: string; date: string; rev?: number }>>
   deltas: { file: string; date: string; ex: Exchange }[]
   indices: { file: string; date: string } | null
+  search?: { file: string; date: string; rev?: number } | null
+  rev?: number
   urls: Record<string, string>
   updatedAt: string
 }
@@ -21,8 +23,8 @@ export interface Net {
 }
 
 export interface MarketCache {
-  get(ex: Exchange): Promise<{ history: History; date: string } | undefined>
-  put(ex: Exchange, history: History, date: string): Promise<void>
+  get(ex: Exchange): Promise<{ history: History; date: string; rev?: number } | undefined>
+  put(ex: Exchange, history: History, date: string, rev?: number): Promise<void>
 }
 
 export class MarketUnavailable extends Error {}
@@ -73,19 +75,21 @@ export async function syncExchange(
     }
   }
 
-  if (cached && cached.date === m.latestDate) return { history: cached.history, date: cached.date, kind: 'none' }
+  // A snapshot rewritten with the same date (new metadata) has a higher rev: a cache built from an older rev must not be reused.
+  const current = !!cached && (cached.rev ?? 0) >= (snap.rev ?? 0)
+  if (cached && current && cached.date === m.latestDate) return { history: cached.history, date: cached.date, kind: 'none' }
   // Deltas continue from the snapshot, so a cache at or after the snapshot date can be brought forward with them alone.
-  if (cached && cached.date >= snap.date) {
+  if (cached && current && cached.date >= snap.date) {
     const h = cached.history
     await applyDeltas(h, cached.date)
     const date = h.dates[h.dates.length - 1] ?? cached.date
-    await cache.put(ex, h, date)
+    await cache.put(ex, h, date, snap.rev ?? 0)
     return { history: h, date, kind: 'deltas' }
   }
   const h = await net.gz<History>(url(snap.file), onBytes)
   await applyDeltas(h, snap.date)
   const date = h.dates[h.dates.length - 1] ?? snap.date
-  await cache.put(ex, h, date)
+  await cache.put(ex, h, date, snap.rev ?? 0)
   return { history: h, date, kind: 'snapshot' }
 }
 
@@ -98,6 +102,15 @@ export async function fetchIndexBars(m: Manifest, net: Net = realNet): Promise<{
   }))
 }
 
+export type SearchItem = [id: string, symbol: string, name: string, isin: string, sector: string]
+export interface SearchIndex { date: string; items: SearchItem[] }
+
+/** The list of every market stock (a few tens of KB). Null when the backend has not published one. */
+export async function fetchSearchIndex(m: Manifest, net: Net = realNet): Promise<SearchIndex | null> {
+  const f = m.search?.file
+  return f && m.urls[f] ? net.gz<SearchIndex>(m.urls[f]) : null
+}
+
 /** One stock's bars as the app's candle set. Prices come back from integer paise to rupees; non-trading days are skipped. */
 export function toCandleSet(h: History, id: string, names?: Map<string, string>): CandleSet | null {
   const s = h.stocks[id]
@@ -107,9 +120,12 @@ export function toCandleSet(h: History, id: string, names?: Map<string, string>)
     if (s.c[i] > 0) candles.push({ t: sessionOpen(h.dates[i]), o: s.o[i] / 100, h: s.h[i] / 100, l: s.l[i] / 100, c: s.c[i] / 100, v: s.v[i], closed: true })
   }
   if (!candles.length) return null
-  const inst: Instrument = { id, exchange: s.ex, symbol: s.sym, name: s.name ?? names?.get(s.sym) ?? s.sym, sector: 'Unclassified', kind: 'equity' }
+  const inst: Instrument = { id, exchange: s.ex, symbol: s.sym, name: s.name ?? names?.get(s.sym) ?? s.sym, sector: s.sector ?? UNCLASSIFIED, kind: 'equity' }
   return { instrument: inst, timeframe: '1D', candles, source: 'market', asOf: candles[candles.length - 1].t }
 }
 
 /** The broad index each exchange's stocks are measured against for relative strength. */
+/** The free industry list covers only about a third of liquid stocks; the rest are shown as this. */
+export const UNCLASSIFIED = 'Unclassified'
+
 export const BENCHMARK_FOR: Record<Exchange, string> = { NSE: 'NSE:NIFTY500', BSE: 'BSE:BSE500' }

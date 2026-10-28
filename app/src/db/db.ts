@@ -43,7 +43,7 @@ export interface StoredBreeze { appKey: string; session?: BreezeSession }
 class AppDB extends Dexie {
   candles!: Table<{ id: string; candles: Candle[]; fetchedAt: number }, string>
   credentials!: Table<{ key: string } & Record<string, unknown>, string>
-  market!: Table<{ ex: string; history: History; date: string }, string>
+  market!: Table<{ ex: string; history: History; date: string; rev?: number }, string>
   scanners!: Table<ScannerConfig, string>
   shortlist!: Table<ShortlistItem, string>
   settings!: Table<{ key: string; value: unknown }, string>
@@ -75,8 +75,8 @@ export const cacheFor = (source: DataSource): CandleCache => ({
 
 /** Not part of export/import: it is public market data that can be re-downloaded. */
 export const marketCache: MarketCache = {
-  get: async (ex: Exchange) => { const r = await db.market.get(ex); return r ? { history: r.history, date: r.date } : undefined },
-  put: async (ex, history, date) => { await db.market.put({ ex, history, date }) },
+  get: async (ex: Exchange) => { const r = await db.market.get(ex); return r ? { history: r.history, date: r.date, rev: r.rev } : undefined },
+  put: async (ex, history, date, rev) => { await db.market.put({ ex, history, date, rev }) },
 }
 
 export async function loadCredentials(): Promise<StoredCredentials | null> {

@@ -1,4 +1,4 @@
-import type { CandleSet } from './types'
+import type { CandleSet, Timeframe } from './types'
 import { makeContext, series, type EvalContext } from './scanner'
 
 /** Snapshot states. Persistent lifecycle tracking (target/stop/expired) arrives with the signals table. */
@@ -35,6 +35,14 @@ export interface TradePlan {
   /** The signal comes from a candle that has closed. */
   provisional: boolean
   asOf: number
+  /** Candle timeframe the plan was evaluated on. */
+  timeframe: Timeframe
+  /** Typical holding period for this strategy, for display. */
+  holding: string
+  /** Trading bars the entry stays valid after asOf; the setup expires after that. */
+  validBars: number
+  /** Approximate expiry timestamp (weekends skipped, exchange holidays ignored). */
+  validUntil: number
 }
 
 export interface StrategyParams { rr: [number, number] }
@@ -45,7 +53,11 @@ export interface Strategy {
   version: number
   name: string
   description: string
-  timeframe: '1D'
+  timeframe: Timeframe
+  /** Typical holding period, e.g. "5–15 trading days". */
+  holding: string
+  /** Trading bars an entry signal stays valid. */
+  validBars: number
   minBars: number
   evaluate: (set: CandleSet, params?: StrategyParams, ctx?: EvalContext) => TradePlan
 }
@@ -57,8 +69,16 @@ export function buildTargets(entry: number, stop: number, rr: number[]) {
   return rr.map(m => ({ rr: m, price: entry + risk * m }))
 }
 
+const DAY = 86_400_000
+/** Advance by n trading days, skipping weekends. */
+function addTradingDays(t: number, n: number) {
+  let d = t
+  for (let left = n; left > 0;) { d += DAY; const wd = new Date(d + 5.5 * 3_600_000).getUTCDay(); if (wd !== 0 && wd !== 6) left-- }
+  return d
+}
+
 function finish(
-  id: string, version: number, set: CandleSet, params: StrategyParams,
+  st: Strategy, set: CandleSet, params: StrategyParams,
   checks: Check[], state: SignalState, entry: number, zone: [number, number], stop: number, level: number | null, summary: string,
 ): TradePlan {
   const totalW = checks.reduce((a, c) => a + c.weight, 0)
@@ -67,15 +87,16 @@ function finish(
   const targets = risk > 0 ? buildTargets(entry, stop, params.rr) : []
   const lastCandle = set.candles[set.candles.length - 1]
   return {
-    strategyId: id, strategyVersion: version, state, entry, entryZone: zone, stop, targets,
+    strategyId: st.id, strategyVersion: st.version, state, entry, entryZone: zone, stop, targets,
     riskPerShare: Math.max(risk, 0), rewardRisk: risk > 0 ? params.rr[0] : 0, score, checks, summary, level,
     provisional: !lastCandle.closed, asOf: lastCandle.t,
+    timeframe: st.timeframe, holding: st.holding, validBars: st.validBars, validUntil: addTradingDays(lastCandle.t, st.validBars),
   }
 }
 
-function insufficient(id: string, version: number, set: CandleSet, params: StrategyParams, need: number): TradePlan {
+function insufficient(st: Strategy, set: CandleSet, params: StrategyParams, need: number): TradePlan {
   const c = set.candles[set.candles.length - 1]?.c ?? 0
-  return finish(id, version, set, params, [{ label: 'History', pass: false, detail: `Needs ${need} bars, have ${set.candles.length}`, weight: 1 }], 'data_insufficient', c, [c, c], c, null, 'Not enough history to evaluate this strategy.')
+  return finish(st, set, params, [{ label: 'History', pass: false, detail: `Needs ${need} bars, have ${set.candles.length}`, weight: 1 }], 'data_insufficient', c, [c, c], c, null, 'Not enough history to evaluate this strategy.')
 }
 
 const pct = (a: number, b: number) => ((a / b - 1) * 100).toFixed(1)
@@ -83,10 +104,10 @@ const pct = (a: number, b: number) => ((a / b - 1) * 100).toFixed(1)
 /* ── Swing breakout ─────────────────────────────────────────────── */
 
 export const swingBreakout: Strategy = {
-  id: 'swing-breakout', version: 1, name: 'Swing breakout', timeframe: '1D', minBars: 210,
+  id: 'swing-breakout', version: 1, name: 'Swing breakout', timeframe: '1D', holding: '5–20 trading days', validBars: 3, minBars: 210,
   description: 'Close above the prior 20-day high with volume confirmation inside an uptrend. Stop sits one ATR below the broken level.',
   evaluate(set, params = DEFAULT_PARAMS, ctx = makeContext(set, null)) {
-    if (set.candles.length < this.minBars) return insufficient(this.id, this.version, set, params, this.minBars)
+    if (set.candles.length < this.minBars) return insufficient(this, set, params, this.minBars)
     const n = set.candles.length - 1
     const close = ctx.closes[n]
     const level = lastOf(series(ctx, 'highest', { period: 20 })) as number
@@ -116,17 +137,17 @@ export const swingBreakout: Strategy = {
     else if (trend && broke && !notExtended) { state = 'missed_entry'; entry = close; summary = `Broke out but price is more than 1 ATR above the level. Chasing here widens risk.` }
     else if (trend && broke && !volOk) { state = 'setup_forming'; entry = close; summary = 'Price cleared resistance but volume did not confirm. Wait for confirmation.' }
     else if (trend && near) { state = 'setup_forming'; summary = `Within 3% of resistance ${level.toFixed(2)}. Trigger is a close above it with volume.` }
-    return finish(this.id, this.version, set, params, checks, state, entry, zone, stop, level, summary)
+    return finish(this, set, params, checks, state, entry, zone, stop, level, summary)
   },
 }
 
 /* ── Trend pullback ─────────────────────────────────────────────── */
 
 export const trendPullback: Strategy = {
-  id: 'trend-pullback', version: 1, name: 'Trend pullback', timeframe: '1D', minBars: 210,
+  id: 'trend-pullback', version: 1, name: 'Trend pullback', timeframe: '1D', holding: '3–10 trading days', validBars: 2, minBars: 210,
   description: 'Uptrend with a pullback to the 20 EMA and a bullish confirmation bar. Stop sits below the recent 5-day low.',
   evaluate(set, params = DEFAULT_PARAMS, ctx = makeContext(set, null)) {
-    if (set.candles.length < this.minBars) return insufficient(this.id, this.version, set, params, this.minBars)
+    if (set.candles.length < this.minBars) return insufficient(this, set, params, this.minBars)
     const n = set.candles.length - 1
     const c = set.candles
     const close = c[n].c
@@ -161,7 +182,7 @@ export const trendPullback: Strategy = {
     else if (trend && near) { state = 'setup_forming'; summary = 'Resting near EMA20. Waiting for a bullish close with RSI turning up.' }
     const entry = close
     const zone: [number, number] = [Math.min(close, ema20), Math.max(close, ema20 * 1.01)]
-    return finish(this.id, this.version, set, params, checks, state, entry, zone, stop, ema20, summary)
+    return finish(this, set, params, checks, state, entry, zone, stop, ema20, summary)
   },
 }
 

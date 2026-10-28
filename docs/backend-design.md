@@ -78,3 +78,18 @@ Setup on Vercel:
 3. Backfill once: `curl -H "Authorization: Bearer <CRON_SECRET>" https://<deployment>/api/data/ingest`, repeating while the
    response has `"stopped": "time budget reached; run again to continue"`.
 4. The cron then runs daily at 14:30 UTC (20:00 IST, within Vercel's one-hour window on Hobby).
+
+## Metadata, search and de-duplication (2026-10-28)
+
+- Company metadata (NSE ISIN and name from Upstox's public instrument master; industry by ISIN from the Nifty Total Market list) is
+  fetched weekly and published as `meta-*`. Daily rows are enriched with it, so deltas keep clients up to date. A failed metadata
+  fetch never blocks prices.
+- A search list of every stock (`search-*`, about 65 KB gzipped) lets a device search both exchanges without price data.
+- Published files carry a revision number (`-rN` in names, `rev` in the manifest). A rewrite with the same date gets a new file
+  name, so neither the CDN nor a device cache can serve stale bytes, and clients with an older cached revision download again.
+- Real-data figures: NSE ISIN for 2,044 of 2,046 liquid stocks; industry for about 36%; 1,234 BSE stocks share an ISIN with an NSE one.
+  Across a full year, "Both" went from 4,617 stocks to 2,998 with each company counted once.
+- The BSE file lists funds, ETFs and bonds as equities. Real shares are kept by series and an ISIN prefix of INE.
+- One-off maintenance, with the same bearer secret as the cron: `?refreshMeta=1` re-fetches metadata and rewrites snapshots;
+  `?rebuild=1` throws away the published history and rebuilds it (two or three runs of about four minutes). Run `rebuild` once after
+  deploying this change, because bonds and funds were already in the published history.
