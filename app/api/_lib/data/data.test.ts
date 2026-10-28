@@ -418,3 +418,19 @@ describe('market pulse', () => {
     expect(pulse).toMatchObject({ date: '2026-10-28', NSE: { total: 1 } })
   })
 })
+
+describe('manifests from before revisions existed', () => {
+  it('upgrades a manifest with no rev to a numeric revision, never NaN', async () => {
+    const store = memoryStore()
+    await advance({ store, ...world({ today: '2026-10-27' }) }, { startDate: '2026-10-27' })
+    const old: Record<string, unknown> = JSON.parse(JSON.stringify(store.manifest()))
+    delete old.rev; delete old.meta; delete old.search; delete old.pulse // what the very first deployment published
+    await store.putManifest(old as never)
+    const r = await advance({ store, ...world({ today: '2026-10-28' }) })
+    expect(r.wrote.some(f => f.includes('NaN') || f.includes('undefined'))).toBe(false)
+    expect(Number.isInteger(store.manifest()!.rev)).toBe(true)
+    const rb = await advance({ store, ...world({ today: '2026-10-28' }) }, { rebuild: true, startDate: '2026-10-27' })
+    expect(rb.wrote.some(f => f.includes('NaN'))).toBe(false)
+    expect(Number.isInteger(store.manifest()!.rev)).toBe(true)
+  })
+})

@@ -139,7 +139,7 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   const budget = opts.budgetMs ?? 200_000
   const today = istDay(t0)
   const previous = (await deps.store.getManifest()) ?? emptyManifest()
-  const m: Manifest = opts.rebuild ? { ...emptyManifest(), rev: previous.rev, meta: previous.meta, urls: {} } : previous
+  const m: Manifest = opts.rebuild ? { ...emptyManifest(), rev: previous.rev ?? 0, meta: previous.meta, urls: {} } : previous
   const h = await load(deps.store, m)
   let meta: Meta | null = m.meta ? await deps.store.getJson<Meta>(m.meta.file) : null
   let metaFresh = false
@@ -179,7 +179,8 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   if (metaFresh && meta) enrichHistory(h, meta)
 
   const urls = { ...m.urls }
-  const rev = m.rev + 1
+  // Manifests written before revisions existed have no `rev`; treat that as 0 rather than producing NaN.
+  const rev = (m.rev ?? 0) + 1
   const next: Manifest = { ...m, latestDate: res.latestDate, updatedAt: new Date(deps.now()).toISOString(), urls }
   const stale: string[] = []
   const foldIntoSnapshot = metaFresh || !m.snapshots.NSE || newDays.length > 3 || new Set(m.deltas.map(x => x.date)).size + newDays.length > 7
