@@ -58,3 +58,22 @@ export const BREEZE_CODES: Record<string, { code: string; token: string }> = {
 }
 
 export const BREEZE_BENCHMARK = { code: 'NIFBEE', token: '10576' }
+
+/** Stocks outside the tracked universe that the user opened through search. Filled at runtime from the master. */
+const EXTRA = new Map<string, { code: string; token: string }>()
+export const registerExtra = (symbol: string, v: { code: string; token: string }) => { EXTRA.set(symbol, v) }
+export const lookupCode = (symbol: string) => BREEZE_CODES[symbol] ?? EXTRA.get(symbol)
+
+/**
+ * NSE indices on the dashboard. `code` is Breeze's stock_code for daily history (unverified for indices; failures just
+ * leave the tile empty). `token` is the instrument master's own token string for the index row (indices
+ * have no numeric token). BSE indices such as the Sensex are not available: Breeze does not serve BSE.
+ */
+export const BREEZE_INDICES = [
+  { id: 'NSE:NIFTY50', code: 'NIFTY', name: 'Nifty 50', token: 'NIFTY 50' },
+  { id: 'NSE:NIFTYBANK', code: 'CNXBAN', name: 'Bank Nifty', token: 'NIFTY BANK' },
+  { id: 'NSE:NIFTYIT', code: 'CNXIT', name: 'Nifty IT', token: 'NIFTY IT' },
+  { id: 'NSE:NIFTYFIN', code: 'NIFFIN', name: 'Fin Services', token: 'NIFTY FIN SERVICE' },
+  { id: 'NSE:NIFTYMID', code: 'NIFMID', name: 'Midcap 50', token: 'NIFTY MIDCAP 50' },
+  { id: 'NSE:INDIAVIX', code: 'INDVIX', name: 'India VIX', token: 'INDIA VIX' },
+] as const

@@ -1,4 +1,4 @@
-import { BREEZE_CODES } from './codes'
+import { BREEZE_CODES, BREEZE_INDICES } from './codes'
 import { BreezeClient } from './client'
 import { BreezeStream } from './stream'
 import { helperAvailable, type BreezeSession } from './session'
@@ -50,6 +50,7 @@ export async function runBreezeDiagnostics(session: BreezeSession | null, onUpda
   }
 
   const stream = new BreezeStream(session, UNIVERSE.slice(0, 5))
+  stream.watchIndices(BREEZE_INDICES)
   try {
     stream.start()
     for (let i = 0; i < 12 && stream.state === 'connecting'; i++) await wait(500)
@@ -60,6 +61,12 @@ export async function runBreezeDiagnostics(session: BreezeSession | null, onUpda
       push({
         label: 'Live feed', status: 'ok',
         detail: stream.ticksReceived ? `Connected and received ${stream.ticksReceived} ticks.` : 'Connected. No ticks yet, which is expected when the market is closed.',
+      })
+      push({
+        label: 'Index feed', status: stream.indexTicksReceived ? 'ok' : 'info',
+        detail: stream.indexTicksReceived
+          ? `Received ${stream.indexTicksReceived} index ticks (Nifty 50, Bank Nifty and others).`
+          : 'No index ticks yet. Expected when the market is closed; if the market is open, the index token format may differ and the dashboard strip will show end-of-day levels only.',
       })
     }
   } finally {

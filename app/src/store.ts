@@ -11,12 +11,16 @@ import { demoProvider } from './providers/demo'
 import { BENCHMARK, UNIVERSE } from './providers/universe'
 import { FyersClient } from './providers/fyers/client'
 import { FyersProvider } from './providers/fyers/provider'
-import { applyQuote } from './providers/candles'
+import { applyQuote, finalizeCandles } from './providers/candles'
 import { ProviderError } from './providers/errors'
 import { beginLogin, completeLoginFromUrl } from './providers/fyers/auth'
 import type { FyersSession } from './providers/fyers/types'
 import { BreezeClient } from './providers/breeze/client'
 import { BreezeProvider } from './providers/breeze/provider'
+import { BREEZE_INDICES } from './providers/breeze/codes'
+import { adoptRow, type MasterRow } from './providers/breeze/master'
+import { indexLevel, type IndexLevel } from './indices'
+import { lastSessionClose } from './domain/time'
 import { beginLogin as beginBreezeLogin, completeLoginFromUrl as completeBreezeLogin, defaultAppKey, exchangeSession, helperInfo, type BreezeSession } from './providers/breeze/session'
 import { loadMarket } from './providers/loader'
 import type { MarketDataProvider } from './providers/types'
@@ -28,7 +32,7 @@ const DEMO_BARS = 400
 /** One year of dailies fits a single FYERS history request. */
 const LIVE_BARS = 250
 /** FYERS quotes cost API calls, so poll gently. Breeze ticks arrive over a socket and polling them is free. */
-const POLL_MS: Record<'fyers' | 'breeze', number> = { fyers: 60_000, breeze: 15_000 }
+const POLL_MS: Record<'fyers' | 'breeze', number> = { fyers: 60_000, breeze: 4_000 }
 
 /**
  * What the user is looking at (spec §5.5). `live` = refreshed from the provider this session;
@@ -57,6 +61,10 @@ interface State {
   instruments: Instrument[]
   sets: Map<string, CandleSet>
   benchmark: CandleSet | null
+  /** Stocks opened from search that are outside the tracked universe. Never fed to scanners. */
+  extras: Map<string, CandleSet>
+  extraStatus: { id: string; state: 'loading' | 'error'; message?: string } | null
+  indexLevels: IndexLevel[]
   userScanners: ScannerConfig[]
   shortlist: ShortlistItem[]
   settings: Settings
@@ -65,6 +73,8 @@ interface State {
   init: () => Promise<void>
   go: (r: Route) => void
   openChart: (instrumentId: string) => void
+  /** Open any NSE stock from search. Outside the tracked universe it is fetched on demand (Breeze only). */
+  openStock: (row: MasterRow | { symbol: string }) => Promise<void>
   loadMarket: () => Promise<void>
   setSource: (s: DataSource) => Promise<void>
   connectFyers: (appId: string, secret: string, remember: boolean) => void
@@ -93,6 +103,9 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let streaming: BreezeProvider | null = null
+let streamStartedAt = 0
+/** Give the socket this long to connect and deliver a first tick before warning that prices are not arriving. */
+const STREAM_GRACE_MS = 20_000
 const stopPolling = () => {
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
@@ -101,8 +114,6 @@ const stopPolling = () => {
 }
 
 export const useApp = create<State>((set, get) => {
-  /** Replace the data and everything derived from it in one update. */
-  const applyData = (sets: Map<string, CandleSet>, benchmark: CandleSet | null) => set({ sets, benchmark })
 
   /** The provider for the selected source, or null when there is no usable session. */
   const liveProvider = (): MarketDataProvider | null => {
@@ -134,26 +145,74 @@ export const useApp = create<State>((set, get) => {
     set({ feed: { ...get().feed, mode: get().sets.size ? 'cached' : 'none', message } })
   }
 
+  /** What was last folded into the candles per instrument, so a repeated tick is not re-applied or re-rendered. */
+  const applied = new Map<string, string>()
+  const eodIndexCandles = new Map<string, CandleSet['candles']>()
+
+  function recomputeIndices(now = Date.now()) {
+    const ticks = new Map((streaming?.liveIndices() ?? []).map(t => [t.id, t]))
+    const levels = BREEZE_INDICES.map(ix => indexLevel(ix.id, ix.name, eodIndexCandles.get(ix.id), ticks.get(ix.id), now)).filter((l): l is IndexLevel => !!l)
+    const prev = get().indexLevels
+    const same = levels.length === prev.length && levels.every((l, i) => l.ltp === prev[i].ltp && l.live === prev[i].live && l.prevClose === prev[i].prevClose)
+    if (!same) set({ indexLevels: levels })
+  }
+
+  /** Daily index bars for the dashboard strip: cache-first, a handful of calls per session. */
+  async function loadIndexLevels(provider: BreezeProvider, now: number) {
+    const cache = cacheFor('breeze')
+    const need = lastSessionClose(now)
+    for (const ix of BREEZE_INDICES) {
+      const key = `IDX:${ix.id}`
+      const cached = await cache.get(key)
+      let candles = cached?.candles
+      if (!cached || cached.fetchedAt < need) {
+        try {
+          candles = await provider.getIndexCandles(ix.code, now - 14 * 86_400_000)
+          if (candles.length) await cache.put(key, candles, now)
+        } catch (e) {
+          if (e instanceof ProviderError && (e.kind === 'auth' || e.kind === 'rate')) break
+        }
+      }
+      if (candles?.length) eodIndexCandles.set(ix.id, candles)
+    }
+    recomputeIndices(now)
+  }
+
   async function pollQuotes() {
-    const { source, sets, benchmark, provider } = get()
+    const { source, sets, extras, benchmark, provider } = get()
     const now = Date.now()
     if (source === 'demo' || !sessionValid(activeSession(), now) || !isMarketOpen(now) || document.visibilityState !== 'visible') return
     try {
-      const quotes = await provider.getQuotes([...UNIVERSE, BENCHMARK])
+      const quotes = await provider.getQuotes([...UNIVERSE, BENCHMARK, ...[...extras.values()].map(e => e.instrument)])
+      recomputeIndices(now)
       if (quotes.length === 0) {
+        const failed = streaming?.stream?.state === 'error'
+        if (!failed && now - streamStartedAt < STREAM_GRACE_MS) return
         const why = streaming?.stream?.message ?? 'no prices have arrived yet'
         set({ feed: { ...get().feed, mode: 'stale', message: `Live prices are not arriving (${why}). Showing end-of-day data.` } })
         return
       }
-      const nextSets = new Map(sets)
-      let nextBench = benchmark
-      for (const q of quotes) {
-        if (q.instrumentId === BENCHMARK.id && nextBench) nextBench = { ...nextBench, candles: applyQuote(nextBench.candles, q, now), asOf: q.at }
-        const cur = nextSets.get(q.instrumentId)
-        if (cur) nextSets.set(q.instrumentId, { ...cur, candles: applyQuote(cur.candles, q, now), asOf: q.at })
+      const fresh = quotes.filter(q => {
+        const key = `${q.ltp}|${q.at}|${q.high}|${q.low}|${q.volume}`
+        if (applied.get(q.instrumentId) === key) return false
+        applied.set(q.instrumentId, key)
+        return true
+      })
+      if (fresh.length) {
+        const nextSets = new Map(sets)
+        const nextExtras = new Map(extras)
+        let nextBench = benchmark
+        for (const q of fresh) {
+          if (q.instrumentId === BENCHMARK.id && nextBench) nextBench = { ...nextBench, candles: applyQuote(nextBench.candles, q, now), asOf: q.at }
+          const cur = nextSets.get(q.instrumentId)
+          if (cur) nextSets.set(q.instrumentId, { ...cur, candles: applyQuote(cur.candles, q, now), asOf: q.at })
+          const ex = nextExtras.get(q.instrumentId)
+          if (ex) nextExtras.set(q.instrumentId, { ...ex, candles: applyQuote(ex.candles, q, now), asOf: q.at })
+        }
+        set({ sets: nextSets, extras: nextExtras, benchmark: nextBench })
       }
-      applyData(nextSets, nextBench)
-      set({ feed: { ...get().feed, mode: 'live', updatedAt: now, message: null } })
+      const f = get().feed
+      if (f.mode !== 'live' || f.message || fresh.length) set({ feed: { ...f, mode: 'live', updatedAt: fresh.length ? now : f.updatedAt, message: null } })
     } catch (e) {
       if (e instanceof ProviderError && e.kind === 'auth') await onAuthLost(e.message)
       else set({ feed: { ...get().feed, mode: 'stale', message: `Live updates paused: ${errText(e)}` } })
@@ -173,6 +232,9 @@ export const useApp = create<State>((set, get) => {
     instruments: UNIVERSE,
     sets: new Map(),
     benchmark: null,
+    extras: new Map(),
+    extraStatus: null,
+    indexLevels: [],
     userScanners: [],
     shortlist: [],
     settings: DEFAULT_SETTINGS,
@@ -266,15 +328,18 @@ export const useApp = create<State>((set, get) => {
         set({
           sets: result.sets, benchmark: result.benchmark, marketStatus: 'ready',
           feed: {
-            mode, updatedAt: connected ? now : null, progress: null,
+            // Breeze reports LIVE only once a real tick arrives (the poll sets updatedAt); history alone is end-of-day.
+            mode, updatedAt: connected && !(provider instanceof BreezeProvider) ? now : null, progress: null,
             message: !connected ? (get().feed.message ?? 'Not connected. Showing data saved on this device.') : result.warnings[0] ?? null,
           },
         })
         if (connected) {
           if (provider instanceof BreezeProvider) {
             // Ticks need a moment to arrive, so Breeze waits for the first interval instead of polling an empty feed.
-            provider.startStream([...UNIVERSE, BENCHMARK])
+            provider.startStream([...UNIVERSE, BENCHMARK, ...[...get().extras.values()].map(e => e.instrument)])
             streaming = provider
+            streamStartedAt = Date.now()
+            void loadIndexLevels(provider, now)
           } else {
             void pollQuotes()
           }
@@ -294,7 +359,9 @@ export const useApp = create<State>((set, get) => {
 
     async setSource(s) {
       await saveDataSource(s)
-      set({ source: s, sets: new Map(), benchmark: null })
+      applied.clear()
+      eodIndexCandles.clear()
+      set({ source: s, sets: new Map(), extras: new Map(), indexLevels: [], extraStatus: null, benchmark: null })
       await get().loadMarket()
     },
 
@@ -342,6 +409,38 @@ export const useApp = create<State>((set, get) => {
     go(r) { location.hash = `#/${r}` },
     openChart(id) { set({ chartSymbol: id }); get().go('charts') },
 
+    async openStock(row) {
+      const id = `NSE:${row.symbol}`
+      const { sets, extras, source } = get()
+      if (sets.has(id) || extras.has(id)) return get().openChart(id)
+      const provider = get().provider
+      if (source !== 'breeze' || !(provider instanceof BreezeProvider) || !sessionValid(get().breeze.session) || !('token' in row)) {
+        set({ extraStatus: { id, state: 'error', message: 'Only the tracked stocks are available on this data source. Connect ICICI Breeze to open any NSE stock.' } })
+        return get().openChart(get().instruments[0]?.id ?? id)
+      }
+      const inst = adoptRow(row)
+      set({ chartSymbol: id, extraStatus: { id, state: 'loading' } })
+      get().go('charts')
+      try {
+        const cache = cacheFor('breeze')
+        const now = Date.now()
+        const cached = await cache.get(inst.id)
+        let candles = cached && cached.fetchedAt >= lastSessionClose(now) ? cached.candles : undefined
+        if (!candles) {
+          candles = (await provider.getHistoricalCandles(inst, '1D', LIVE_BARS)).candles
+          if (candles.length) await cache.put(inst.id, candles, now)
+        }
+        if (candles.length < 2) throw new ProviderError(`Breeze returned no daily history for ${inst.symbol}.`, 'api')
+        const next = new Map(get().extras)
+        next.set(inst.id, { instrument: inst, timeframe: '1D', candles: finalizeCandles(candles, now), source: 'breeze', asOf: candles[candles.length - 1].t })
+        set({ extras: next, extraStatus: null })
+        provider.watch(inst)
+      } catch (e) {
+        if (e instanceof ProviderError && e.kind === 'auth') await onAuthLost(e.message)
+        set({ extraStatus: { id, state: 'error', message: errText(e) } })
+      }
+    },
+
     async saveScanner(s) {
       const clean = scannerSchema.parse(s) as ScannerConfig
       await db.scanners.put(clean)
@@ -356,7 +455,7 @@ export const useApp = create<State>((set, get) => {
     },
 
     run(cfg) {
-      const universe = [...get().sets.values()]
+      const universe = UNIVERSE.map(i => get().sets.get(i.id)).filter((x): x is CandleSet => !!x)
       const result = runScanner(cfg, universe, get().benchmark)
       set({ runs: { ...get().runs, [cfg.id]: result } })
       void db.scanRuns.put({ ...result, id: cfg.id })

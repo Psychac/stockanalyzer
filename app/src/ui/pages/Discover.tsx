@@ -42,7 +42,7 @@ function ResultRow({ r, source }: { r: ScanResult; source: string }) {
       <div className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition hover:bg-panel2/40" onClick={() => setOpen(!open)}>
         <ScoreRing score={r.matched ? r.score : null} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2"><span className="font-semibold">{r.symbol}</span><span className="chip !py-0 text-[10px]">{r.sector}</span></div>
+          <div className="flex min-w-0 items-center gap-2"><span className="truncate font-semibold">{r.symbol}</span><span className="chip hidden !py-0 text-[10px] sm:inline-flex">{r.sector}</span></div>
           <div className="truncate text-xs text-mute">{r.excludedBy ? `Excluded: ${r.excludedBy}` : r.name}</div>
         </div>
         <div className="num text-right"><div className="text-sm">₹{price(r.close)}</div><div className={`text-xs ${tone(r.changePct)}`}>{pct(r.changePct)}</div></div>
@@ -93,6 +93,7 @@ export function Discover() {
   const [showAll, setShowAll] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const resultsRef = useRef<HTMLElement>(null)
 
   const sel = scanners.find(s => s.id === selId) ?? scanners[0]
   const lastRun = runs[sel.id]
@@ -101,6 +102,12 @@ export function Discover() {
   const matches = lastRun?.results.filter(r => r.matched) ?? []
   const shown = showAll ? lastRun?.results ?? [] : matches
   const blocked = sel.requires ? REQUIRES_LABEL[sel.requires] : null
+
+  const onRun = () => {
+    run(sel)
+    // On a phone the results sit below the fold; bring them into view.
+    if (window.innerWidth < 1024) setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+  }
 
   const edit = () => setEditing(isPreset(sel.id) ? { cfg: duplicateScanner(sel, `${sel.name} (mine)`), isNew: true } : { cfg: sel, isNew: false })
   const onSave = async (cfg: ScannerConfig) => { await save(cfg); setSelId(cfg.id); setEditing(null); setNote(null) }
@@ -130,7 +137,25 @@ export function Discover() {
         actions={<><DataBadge set={benchmark} /><button className="btn btn-primary" onClick={() => setEditing({ cfg: blankScanner(), isNew: true })}>+ New scanner</button></>}
       />
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-        <aside className="space-y-1.5">
+        <div className="lg:hidden">
+          <label className="label mb-1.5 block px-1" htmlFor="scanner-pick">Scanner</label>
+          <select id="scanner-pick" className="field !py-2.5 text-sm" value={sel.id} onChange={e => setSelId(e.target.value)}>
+            <optgroup label="Presets">
+              {scanners.filter(x => isPreset(x.id)).map(x => <option key={x.id} value={x.id}>{x.name}{x.requires ? ' (needs more data)' : ''}{runs[x.id] ? ` · ${runs[x.id].results.filter(r => r.matched).length} matches` : ''}</option>)}
+            </optgroup>
+            {scanners.some(x => !isPreset(x.id)) && (
+              <optgroup label="My scanners">
+                {scanners.filter(x => !isPreset(x.id)).map(x => <option key={x.id} value={x.id}>{x.name}{runs[x.id] ? ` · ${runs[x.id].results.filter(r => r.matched).length} matches` : ''}</option>)}
+              </optgroup>
+            )}
+          </select>
+          <div className="mt-2 flex items-center gap-2 px-1">
+            <button className="btn btn-sm" onClick={() => fileRef.current?.click()}>Import scanner</button>
+            {note && <p className="text-xs text-mute">{note}</p>}
+          </div>
+        </div>
+
+        <aside className="hidden space-y-1.5 lg:block">
           {([['Presets', scanners.filter(s => isPreset(s.id))], ['My scanners', scanners.filter(s => !isPreset(s.id))]] as const).map(([title, list]) => (
             <div key={title} className="mb-3">
               <div className="label mb-1.5 px-1">{title}</div>
@@ -151,29 +176,28 @@ export function Discover() {
           ))}
           <div className="flex gap-2 px-1">
             <button className="btn btn-sm" onClick={() => fileRef.current?.click()}>Import</button>
-            <input ref={fileRef} type="file" accept="application/json" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void importOne(f); e.target.value = '' }} />
           </div>
           {note && <p className="px-1 text-xs text-mute">{note}</p>}
         </aside>
 
         <div className="min-w-0 space-y-4">
-          <section className="card p-5">
+          <section className="card p-4 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-lg font-semibold">{sel.name} <span className="text-xs font-normal text-mute">v{sel.version}{isPreset(sel.id) ? ' · built-in' : ''}</span></h2>
                 <p className="mt-1 max-w-xl text-sm text-mute">{sel.description}</p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button className="btn" onClick={edit}>{isPreset(sel.id) ? 'Customize copy' : 'Edit'}</button>
+              <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+                <button className="btn btn-primary order-first w-full !py-2.5 sm:order-last sm:w-auto sm:!py-2" disabled={!!blocked || status !== 'ready'} onClick={onRun}>{lastRun ? 'Re-run scan' : 'Run scan'}</button>
+                <button className="btn btn-sm sm:!px-3.5 sm:!py-2 sm:!text-sm" onClick={edit}>{isPreset(sel.id) ? 'Customize copy' : 'Edit'}</button>
                 {!isPreset(sel.id) && <>
-                  <button className="btn" onClick={() => void save(duplicateScanner(sel)).then(() => setNote('Duplicated.'))}>Duplicate</button>
-                  <button className="btn text-down" onClick={() => { if (confirm(`Delete "${sel.name}"?`)) { void del(sel.id); setSelId(PRESETS[0].id) } }}>Delete</button>
+                  <button className="btn btn-sm sm:!px-3.5 sm:!py-2 sm:!text-sm" onClick={() => void save(duplicateScanner(sel)).then(() => setNote('Duplicated.'))}>Duplicate</button>
+                  <button className="btn btn-sm text-down sm:!px-3.5 sm:!py-2 sm:!text-sm" onClick={() => { if (confirm(`Delete "${sel.name}"?`)) { void del(sel.id); setSelId(PRESETS[0].id) } }}>Delete</button>
                 </>}
-                <button className="btn" onClick={exportOne}>Export</button>
-                <button className="btn btn-primary" disabled={!!blocked || status !== 'ready'} onClick={() => run(sel)}>{lastRun ? 'Re-run' : 'Run scan'}</button>
+                <button className="btn btn-sm sm:!px-3.5 sm:!py-2 sm:!text-sm" onClick={exportOne}>Export</button>
               </div>
             </div>
-            <details className="mt-3 text-sm" open={!sel.requires}>
+            <details className="mt-3 text-sm">
               <summary className="cursor-pointer text-xs text-mute">Rules &amp; universe</summary>
               <ul className="mt-2"><Rules n={sel.root as Group} /></ul>
               <p className="mt-2 text-xs text-mute">
@@ -186,7 +210,7 @@ export function Discover() {
           {!lastRun && !blocked && <Empty icon="⌕" title="Run this scanner">Evaluates {instruments.length} NSE stocks against the rules on the latest closed candle.</Empty>}
 
           {lastRun && (
-            <section className="card overflow-hidden">
+            <section ref={resultsRef} className="card scroll-mt-4 overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 px-4 py-3">
                 <div>
                   <div className="font-semibold">{matches.length} match{matches.length === 1 ? '' : 'es'} <span className="font-normal text-mute">of {lastRun.universeSize}</span></div>
@@ -201,6 +225,7 @@ export function Discover() {
           )}
         </div>
       </div>
+      <input ref={fileRef} type="file" accept="application/json" className="sr-only" tabIndex={-1} onChange={e => { const f = e.target.files?.[0]; if (f) void importOne(f); e.target.value = '' }} />
       <div className="mt-6"><Disclaimer /></div>
 
       {editing && <ScannerBuilder initial={editing.cfg} isNew={editing.isNew} sectors={sectors} onSave={cfg => void onSave(cfg)} onCancel={() => setEditing(null)} />}

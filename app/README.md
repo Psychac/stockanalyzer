@@ -44,6 +44,18 @@ function instead, shown in Settings: `https://<your-deployment>/api/breeze/callb
 It takes the one-time code from the request and sends the browser into the app with a normal GET. If you are not returned to
 the app, copy the value after `apisession=` from the address bar into "Or paste the session code" in Settings.
 
+### Search, indices and live updates (Breeze)
+
+- **Search** (top of every page) covers every NSE stock when Breeze is connected. Stocks outside the tracked 50 are fetched on
+  demand (one history call) and added to the live feed while you view them. They are never fed to the scanners. The stock list
+  is a build-time snapshot of ICICI's instrument master (`src/providers/breeze/master.json`), because that file sends no CORS
+  header. Without Breeze, search covers the tracked 50 only.
+- **Index strip** on the dashboard shows Nifty 50, Bank Nifty, Nifty IT, Fin Services, Midcap 50 and India VIX: last daily close
+  (`EOD`) until live ticks arrive, then `LIVE`. The **Sensex is not available**: it is a BSE index and Breeze does not serve BSE.
+- **Live charts** update only the latest candle, so the chart is built once per stock and keeps its zoom.
+- Not verified against a real Breeze login: the index history codes, and the index tick layout. **Run test** reports whether index
+  ticks arrive.
+
 ### Prefilling the app key
 
 Set `VITE_BREEZE_APP_KEY` (see `.env.example`) in a local `.env.local`, or as a Vercel environment variable, and Settings

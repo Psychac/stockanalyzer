@@ -17,7 +17,7 @@ function OperandEditor({ o, onChange, allowValue, tf }: { o: Operand; onChange: 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       <select
-        className="field !w-auto max-w-[190px] !py-1 text-xs"
+        className="field !py-1.5 text-xs sm:!w-auto sm:max-w-[190px] sm:!py-1"
         value={o.kind === 'value' ? '__value__' : o.field}
         onChange={e => onChange(e.target.value === '__value__' ? valueOperand(0) : fieldOperand(e.target.value, Object.fromEntries(FIELD_MAP[e.target.value].params.map(p => [p.name, p.default]))))}
       >
@@ -41,15 +41,20 @@ function OperandEditor({ o, onChange, allowValue, tf }: { o: Operand; onChange: 
 
 function RuleRow({ r, update, remove, tf }: { r: Rule; update: (r: Rule) => void; remove: () => void; tf: ScannerConfig['timeframe'] }) {
   return (
-    <div className={`flex flex-wrap items-center gap-2 rounded-xl border border-line/80 bg-bg/40 p-2 ${r.enabled ? '' : 'opacity-45'}`}>
-      <input type="checkbox" className="h-4 w-4 accent-[var(--color-accent)]" checked={r.enabled} onChange={e => update({ ...r, enabled: e.target.checked })} aria-label="Enabled" />
+    <div className={`flex flex-col gap-2 rounded-xl border border-line/80 bg-bg/40 p-2.5 sm:flex-row sm:flex-wrap sm:items-center ${r.enabled ? '' : 'opacity-45'}`}>
+      <div className="flex items-center justify-between sm:contents">
+        <label className="flex items-center gap-2 text-xs text-mute sm:block">
+          <input type="checkbox" className="h-4 w-4 accent-[var(--color-accent)]" checked={r.enabled} onChange={e => update({ ...r, enabled: e.target.checked })} aria-label="Enabled" />
+          <span className="sm:hidden">Condition on</span>
+        </label>
+        <button className="btn btn-sm btn-ghost text-down sm:order-last sm:ml-auto" onClick={remove} aria-label="Remove condition">Remove ✕</button>
+      </div>
       <OperandEditor o={r.left} onChange={left => update({ ...r, left })} allowValue={false} tf={tf} />
-      <select className="field !w-auto !py-1 text-xs" value={r.op} onChange={e => update({ ...r, op: e.target.value as Rule['op'], pct: e.target.value === 'withinPct' ? r.pct ?? 2 : r.pct })}>
+      <select className="field !py-1.5 text-xs sm:!w-auto sm:!py-1" value={r.op} onChange={e => update({ ...r, op: e.target.value as Rule['op'], pct: e.target.value === 'withinPct' ? r.pct ?? 2 : r.pct })}>
         {OPERATORS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
       </select>
       {r.op === 'withinPct' && <input className="field num !w-16 !py-1 text-xs" type="number" step="0.1" min={0} value={r.pct ?? 0} onChange={e => update({ ...r, pct: Number(e.target.value) })} aria-label="Tolerance %" />}
       <OperandEditor o={r.right} onChange={right => update({ ...r, right })} allowValue={r.op !== 'withinPct'} tf={tf} />
-      <button className="btn btn-sm btn-ghost ml-auto text-down" onClick={remove} aria-label="Remove condition">✕</button>
     </div>
   )
 }
@@ -90,7 +95,7 @@ export function ScannerBuilder({ initial, sectors, onSave, onCancel, isNew }: { 
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6" onClick={onCancel}>
-      <div className="card flex max-h-[94vh] w-full max-w-3xl flex-col !rounded-b-none sm:!rounded-b-2xl" onClick={e => e.stopPropagation()}>
+      <div className="card flex max-h-[94dvh] w-full max-w-3xl flex-col !rounded-b-none sm:!rounded-b-2xl" onClick={e => e.stopPropagation()}>
         <header className="flex items-center justify-between border-b border-line/70 px-5 py-4">
           <div><h2 className="text-lg font-semibold">{isNew ? 'New scanner' : 'Edit scanner'}</h2><p className="text-xs text-mute">Version {draft.version}{isNew ? '' : ` → ${draft.version + 1} on save`}</p></div>
           <button className="btn btn-ghost btn-sm" onClick={onCancel} aria-label="Close">✕</button>

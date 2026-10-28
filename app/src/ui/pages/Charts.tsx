@@ -3,7 +3,7 @@ import { useApp } from '../../store'
 import { STRATEGIES, sizePosition } from '../../domain/trade'
 import { DataBadge, Disclaimer, NoData, PageHeader, ScoreRing, Skeleton, StarButton, StateBadge } from '../components/bits'
 import { PriceChart, type ChartOptions } from '../components/PriceChart'
-import { dateOnly, pct, price, rupees, tone } from '../format'
+import { dateOnly, pct, price, rupees, timeOnly, tone } from '../format'
 
 const DEFAULT_OPTS: ChartOptions = { sma20: false, sma50: true, sma200: true, ema20: false, volume: true, rsi: false, macd: false }
 const TOGGLES: { key: keyof ChartOptions; label: string }[] = [
@@ -17,6 +17,9 @@ export function Charts() {
   const sets = useApp(s => s.sets)
   const settings = useApp(s => s.settings)
   const chartSymbol = useApp(s => s.chartSymbol)
+  const extras = useApp(s => s.extras)
+  const extraStatus = useApp(s => s.extraStatus)
+  const feed = useApp(s => s.feed)
   const openChart = useApp(s => s.openChart)
 
   const [opts, setOpts] = useState<ChartOptions>(() => {
@@ -27,12 +30,24 @@ export function Charts() {
   useEffect(() => { try { localStorage.setItem('chartOpts', JSON.stringify(opts)) } catch { /* storage may be unavailable */ } }, [opts])
 
   const id = chartSymbol ?? instruments[0]?.id
-  const set = id ? sets.get(id) : undefined
+  const set = id ? sets.get(id) ?? extras.get(id) : undefined
   const strategy = STRATEGIES.find(s => s.id === strategyId)!
   const plan = useMemo(() => (set ? strategy.evaluate(set, { rr: [settings.rr1, settings.rr2] }) : null), [set, strategy, settings.rr1, settings.rr2])
   const sizing = useMemo(() => (plan && plan.riskPerShare > 0 ? sizePosition({ capital: settings.capital, riskPct: settings.riskPct, entry: plan.entry, stop: plan.stop, maxPositionPct: settings.maxPositionPct, roundTripCostPct: settings.roundTripCostPct }) : null), [plan, settings])
 
   if (status === 'loading') return <><PageHeader title="Charts" /><Skeleton className="h-[480px]" /></>
+  if (extraStatus && extraStatus.id === id && !set) {
+    const sym = id?.replace('NSE:', '')
+    return (
+      <>
+        <PageHeader title="Charts" />
+        {extraStatus.state === 'loading'
+          ? <><p className="mb-3 text-sm text-mute">Loading {sym} from Breeze…</p><Skeleton className="h-[420px]" /></>
+          : <NoData />}
+        {extraStatus.state === 'error' && <p className="mt-3 text-sm text-down">{extraStatus.message}</p>}
+      </>
+    )
+  }
   if (status === 'error' || !set || !plan) return <><PageHeader title="Charts" /><NoData /></>
 
   const c = set.candles
@@ -40,7 +55,10 @@ export function Charts() {
   const chg = (last.c / c[c.length - 2].c - 1) * 100
   const extraPanes = Number(opts.rsi) + Number(opts.macd)
   const height = 420 + extraPanes * 130
-  const tradable = plan.state === 'entry_eligible' || plan.state === 'setup_forming'
+  // Levels are drawn for every stock that has enough history. Without an active setup they are labelled as reference only.
+  const hasLevels = plan.state !== 'data_insufficient' && plan.riskPerShare > 0
+  const active = plan.state === 'entry_eligible' || plan.state === 'setup_forming'
+  const live = feed.mode === 'live' && !!feed.updatedAt && !last.closed
 
   return (
     <>
@@ -48,12 +66,13 @@ export function Charts() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <select className="field !w-auto min-w-48" value={id} onChange={e => openChart(e.target.value)} aria-label="Instrument">
-          {instruments.map(i => <option key={i.id} value={i.id}>{i.symbol} — {i.name}</option>)}
+          {[...instruments, ...[...extras.values()].map(e => e.instrument)].map(i => <option key={i.id} value={i.id}>{i.symbol} — {i.name}</option>)}
         </select>
         <div className="flex items-baseline gap-3">
           <span className="num text-2xl font-semibold">₹{price(last.c)}</span>
           <span className={`num text-sm font-medium ${tone(chg)}`}>{pct(chg)}</span>
-          <span className="text-xs text-mute">{last.closed ? 'Close' : 'Last'} · {dateOnly(last.t)} · {set.instrument.sector}</span>
+          <span className="text-xs text-mute">{last.closed ? 'Close' : 'Last'} · {dateOnly(last.t)}{set.instrument.sector !== 'Other' ? ` · ${set.instrument.sector}` : ''}</span>
+          {live && <span className="chip border-up/40 text-up"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-up" />LIVE{feed.updatedAt ? ` · ${timeOnly(feed.updatedAt)}` : ''}</span>}
         </div>
         <StarButton instrumentId={set.instrument.id} source="Charts" />
       </div>
@@ -66,7 +85,7 @@ export function Charts() {
             ))}
             <button onClick={() => setShowPlan(!showPlan)} className={`chip ml-auto cursor-pointer ${showPlan ? 'border-up/50 bg-up/10 text-up' : ''}`}>Trade plan overlay</button>
           </div>
-          <PriceChart set={set} options={opts} plan={showPlan && tradable ? plan : null} height={height} />
+          <PriceChart set={set} options={opts} plan={showPlan && hasLevels ? plan : null} height={height} />
           <div className="mt-1 flex justify-between px-1 text-[10px] text-mute"><span>Daily candles · {c.length} bars</span><span>Chart by TradingView</span></div>
         </section>
 
@@ -83,9 +102,12 @@ export function Charts() {
             </div>
             {plan.provisional && <p className="mt-2 text-xs text-warn">Provisional: based on a candle that has not closed.</p>}
 
-            {tradable && (
+            {hasLevels && !active && (
+              <p className="mt-3 rounded-lg border border-warn/30 bg-warn/5 p-2 text-xs text-warn">No active setup. These are reference levels for where the strategy would trigger, not a signal to trade.</p>
+            )}
+            {hasLevels && (
               <dl className="num mt-4 grid grid-cols-2 gap-x-4 gap-y-2.5 text-sm">
-                <Row k={plan.state === 'setup_forming' && plan.level ? 'Trigger' : 'Entry'} v={`₹${price(plan.entry)}`} />
+                <Row k={plan.state === 'setup_forming' && plan.level ? 'Trigger' : active ? 'Entry' : 'Reference entry'} v={`₹${price(plan.entry)}`} />
                 <Row k="Entry zone" v={`${price(plan.entryZone[0])}–${price(plan.entryZone[1])}`} />
                 <Row k="Stop-loss" v={`₹${price(plan.stop)}`} cls="text-down" />
                 <Row k="Risk / share" v={`₹${price(plan.riskPerShare)}`} />
@@ -94,9 +116,9 @@ export function Charts() {
             )}
           </section>
 
-          {tradable && sizing && (
+          {hasLevels && sizing && (
             <section className="card p-5">
-              <h3 className="mb-3 font-semibold">Position size</h3>
+              <h3 className="mb-3 font-semibold">Position size{!active && <span className="ml-2 text-xs font-normal text-warn">hypothetical</span>}</h3>
               {sizing.shares === 0 ? <p className="text-sm text-warn">Risk budget or position cap is too small for one share at this stop distance.</p> : (
                 <dl className="num grid grid-cols-2 gap-x-4 gap-y-2.5 text-sm">
                   <Row k="Quantity" v={`${sizing.shares.toLocaleString('en-IN')} sh`} />

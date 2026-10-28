@@ -7,6 +7,7 @@ import { Charts } from './pages/Charts'
 import { SettingsPage } from './pages/Settings'
 import { Planned } from './pages/Planned'
 import { DataBadge, FeedBanner } from './components/bits'
+import { SearchBox } from './components/SearchBox'
 import { dateOnly } from './format'
 
 const ICONS: Record<Route, ReactNode> = {
@@ -84,6 +85,7 @@ export function App() {
           <div className="flex items-center gap-2"><img src="icon.svg" alt="" className="h-7 w-7" /><span className="font-semibold">Stock Analyzer</span></div>
           <DataBadge compact />
         </div>
+        <div className="mb-4 md:mb-6"><SearchBox /></div>
         <FeedBanner />
         <div key={route} className="rise"><Page route={route} /></div>
       </main>

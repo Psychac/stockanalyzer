@@ -6,7 +6,7 @@ import type { ConnectionStatus, MarketDataProvider, Quote } from '../types'
 import { mergeCandles } from '../candles'
 import type { BreezeClient } from './client'
 import { parseBreezeCandles } from './candles'
-import { BREEZE_BENCHMARK, BREEZE_CODES } from './codes'
+import { BREEZE_BENCHMARK, BREEZE_INDICES, lookupCode } from './codes'
 import { BreezeStream } from './stream'
 import type { BreezeSession } from './session'
 
@@ -14,7 +14,7 @@ const DAY = 86_400_000
 /** Keep each request to a year so it stays well inside any row cap. */
 const MAX_SPAN_DAYS = 365
 
-export const codeFor = (i: Instrument): string | null => (i.kind === 'index' ? BREEZE_BENCHMARK.code : BREEZE_CODES[i.symbol]?.code ?? null)
+export const codeFor = (i: Instrument): string | null => (i.kind === 'index' ? BREEZE_BENCHMARK.code : lookupCode(i.symbol)?.code ?? null)
 
 export class BreezeProvider implements MarketDataProvider {
   readonly id = 'breeze' as const
@@ -49,6 +49,15 @@ export class BreezeProvider implements MarketDataProvider {
   private async fetchRange(instrument: Instrument, fromMs: number, toMs: number): Promise<Candle[]> {
     const code = codeFor(instrument)
     if (!code) throw new ProviderError(`No Breeze code for ${instrument.symbol}.`, 'api')
+    return this.fetchCode(code, fromMs, toMs)
+  }
+
+  /** Daily bars for an NSE index by its Breeze stock_code (e.g. CNXBAN). */
+  getIndexCandles(code: string, sinceMs: number): Promise<Candle[]> {
+    return this.fetchCode(code, sinceMs, this.now())
+  }
+
+  private async fetchCode(code: string, fromMs: number, toMs: number): Promise<Candle[]> {
     const rows = await this.client.history({
       interval: '1day', stock_code: code, exch_code: 'NSE', product_type: 'cash',
       from_date: `${istDate(fromMs)}T00:00:00.000Z`, to_date: `${istDate(toMs)}T23:59:59.000Z`,
@@ -79,8 +88,15 @@ export class BreezeProvider implements MarketDataProvider {
   startStream(instruments: Instrument[]) {
     this.stopStream()
     this.stream = new BreezeStream(this.session, instruments)
+    this.stream.watchIndices(BREEZE_INDICES)
     this.stream.start()
   }
+
+  /** Latest live index ticks, if the socket is delivering any. */
+  liveIndices() { return this.stream?.latestIndices() ?? [] }
+
+  /** Add a stock opened from search to the live feed. */
+  watch(i: Instrument) { this.stream?.add(i) }
 
   stopStream() { this.stream?.stop(); this.stream = null }
 

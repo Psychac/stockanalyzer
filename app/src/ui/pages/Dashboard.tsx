@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useApp } from '../../store'
 import { STRATEGIES, type TradePlan } from '../../domain/trade'
 import { makeContext } from '../../domain/scanner'
-import { DataBadge, Disclaimer, NoData, PageHeader, Skeleton, Sparkline, StateBadge, StarButton } from '../components/bits'
+import { DataBadge, Disclaimer, IndexStrip, NoData, PageHeader, Skeleton, Sparkline, StateBadge, StarButton } from '../components/bits'
 import { dateOnly, pct, price, tone } from '../format'
 
 export function Dashboard() {
@@ -57,10 +57,12 @@ export function Dashboard() {
     <>
       <PageHeader title="Dashboard" subtitle={`${dateOnly(asOf)}. ${benchmark!.candles[benchmark!.candles.length - 1].closed ? 'Prices are end-of-day closes.' : "Includes today's session in progress."}`} actions={<DataBadge set={benchmark} />} />
 
+      <IndexStrip />
+
       <div className="grid gap-4 lg:grid-cols-3">
         <section className="card flex items-center justify-between gap-4 p-5">
           <div>
-            <div className="label">Nifty 50{source === 'demo' ? ' · demo index' : ''}</div>
+            <div className="label">{source === 'breeze' ? 'Nifty BeES · Nifty 50 ETF' : source === 'demo' ? 'Nifty 50 · demo index' : 'Nifty 50'}</div>
             <div className="num mt-1 text-3xl font-semibold">{price(data.bench.last)}</div>
             <div className={`num mt-1 text-sm font-medium ${tone(data.bench.chg)}`}>{pct(data.bench.chg)}</div>
           </div>

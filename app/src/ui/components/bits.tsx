@@ -3,7 +3,7 @@ import type { CandleSet } from '../../domain/types'
 import { STATE_LABEL, type SignalState } from '../../domain/trade'
 import { useApp } from '../../store'
 import { isMarketOpen } from '../../domain/time'
-import { dateOnly, timeOnly } from '../format'
+import { dateOnly, pct, price, timeOnly, tone } from '../format'
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
   return (
@@ -26,9 +26,9 @@ export function DataBadge({ set, compact }: { set?: CandleSet | null; compact?: 
   const open = isMarketOpen(now)
   const view = loading ? { text: 'LOADING', tone: 'accent', tip: 'Loading market data…' } : {
     demo: { text: 'DEMO DATA', tone: 'warn', tip: 'Synthetic data for development. Not real prices.' },
-    live: open
+    live: open && feed.updatedAt
       ? { text: 'LIVE', tone: 'up', tip: `Live prices${feed.updatedAt ? `, last update ${timeOnly(feed.updatedAt)}` : ''}` }
-      : { text: 'EOD', tone: 'up', tip: 'End-of-day data. The market is closed.' },
+      : { text: 'EOD', tone: 'up', tip: open ? 'End-of-day data. Waiting for the first live price.' : 'End-of-day data. The market is closed.' },
     cached: { text: 'CACHED', tone: 'warn', tip: feed.message ?? 'Saved on this device. Not connected.' },
     stale: { text: 'STALE', tone: 'down', tip: feed.message ?? 'Some data could not be refreshed.' },
     none: { text: 'NO DATA', tone: 'down', tip: 'No market data loaded.' },
@@ -37,7 +37,7 @@ export function DataBadge({ set, compact }: { set?: CandleSet | null; compact?: 
   const dot = { warn: 'bg-warn', up: 'bg-up', down: 'bg-down', accent: 'bg-accent' }[view.tone]
   return (
     <span className={`chip ${color}`} title={view.tip}>
-      <span className={`h-1.5 w-1.5 rounded-full ${dot} ${feed.mode === 'live' && open ? 'animate-pulse' : ''}`} />
+      <span className={`h-1.5 w-1.5 rounded-full ${dot} ${feed.mode === 'live' && open && feed.updatedAt ? 'animate-pulse' : ''}`} />
       {!loading && feed.mode !== 'demo' && feed.mode !== 'none' && <span className="text-mute">{source === 'breeze' ? 'BREEZE' : 'FYERS'} ·</span>}
       {view.text}
       {!compact && !loading && set && <span className="text-mute">· {set.candles[set.candles.length - 1]?.closed === false ? `${dateOnly(set.asOf)} session in progress` : `as of ${dateOnly(set.asOf)} close`}</span>}
@@ -175,3 +175,30 @@ export const Disclaimer = () => (
     Informational only, not investment advice. Signals are rule-based and unvalidated; trading involves risk of loss. Stop-losses do not guarantee execution at the stop price.
   </p>
 )
+
+export function IndexStrip() {
+  const levels = useApp(s => s.indexLevels)
+  const source = useApp(s => s.source)
+  const status = useApp(s => s.marketStatus)
+  if (source !== 'breeze' || status !== 'ready') return null
+  if (levels.length === 0) {
+    return <p className="mb-4 text-xs text-mute">Index levels are not available from Breeze yet. They appear once Breeze returns daily bars for the Nifty indices.</p>
+  }
+  return (
+    <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0">
+      {levels.map(l => {
+        const chg = l.prevClose ? (l.ltp / l.prevClose - 1) * 100 : null
+        return (
+          <div key={l.id} className="card min-w-[8.5rem] shrink-0 px-3 py-2.5" title={l.live ? 'Live tick' : 'Last daily close'}>
+            <div className="flex items-center justify-between gap-2 text-[11px] text-mute">
+              <span className="truncate">{l.name}</span>
+              <span className={`flex items-center gap-1 ${l.live ? 'text-up' : ''}`}><span className={`h-1.5 w-1.5 rounded-full ${l.live ? 'animate-pulse bg-up' : 'bg-mute'}`} />{l.live ? 'LIVE' : 'EOD'}</span>
+            </div>
+            <div className="num mt-0.5 text-base font-semibold">{price(l.ltp)}</div>
+            <div className={`num text-xs font-medium ${chg === null ? 'text-mute' : tone(chg)}`}>{chg === null ? '—' : pct(chg)}</div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
