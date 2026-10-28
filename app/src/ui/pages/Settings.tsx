@@ -63,6 +63,8 @@ export function SettingsPage() {
 
         <MarketDataCard />
 
+        <MarketWideCard />
+
         <section className="card space-y-3 p-5">
           <h2 className="font-semibold">Backup &amp; restore</h2>
           <p className="text-xs text-mute">Move scanners, shortlist and settings between devices. No sync service involved.</p>
@@ -99,7 +101,7 @@ function MarketDataCard() {
   return (
     <section className="card space-y-4 p-5 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><h2 className="font-semibold">Market data</h2><p className="text-xs text-mute">Pick where prices come from. Your choice is remembered on this device.</p></div>
+        <div><h2 className="font-semibold">Live price source</h2><p className="text-xs text-mute">Where the tracked 50 stocks and live prices come from. Your choice is remembered on this device. Market-wide end-of-day data is separate, below.</p></div>
         <div className="flex rounded-xl bg-bg/60 p-1 text-sm">
           {([['demo', 'Demo data'], ['fyers', 'FYERS'], ['breeze', 'ICICI Breeze']] as const).map(([k, label]) => (
             <button key={k} disabled={loading} onClick={() => source !== k && void setSource(k)} className={`rounded-lg px-3 py-1.5 transition disabled:opacity-50 ${source === k ? 'bg-panel2 text-ink' : 'text-mute hover:text-ink'}`}>{label}</button>
@@ -160,6 +162,43 @@ function MarketDataCard() {
             <p>Free plan limits: 50 data calls a minute and 100 live symbols. Requests are paced below that, and the first load takes a minute or two.</p>
           </div>
         </div>
+      )}
+    </section>
+  )
+}
+
+/** The market-wide end-of-day data downloaded from this project's own backend. */
+function MarketWideCard() {
+  const meta = useApp(s => s.marketMeta)
+  const market = useApp(s => s.market)
+  const loadMarketData = useApp(s => s.loadMarketData)
+  const clear = useApp(s => s.clearMarketData)
+  const busy = market.status === 'loading'
+  const total = (meta.NSE?.stocks ?? 0) + (meta.BSE?.stocks ?? 0)
+  return (
+    <section className="card space-y-3 p-5 lg:col-span-2">
+      <div>
+        <h2 className="font-semibold">Market-wide data <span className="text-xs font-normal text-mute">end-of-day</span></h2>
+        <p className="text-xs text-mute">Liquid NSE and BSE stocks, published daily by your shared backend and screened on this device. It powers the All NSE and All BSE scans and search. It is public market data, so it is not part of backups.</p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {(['NSE', 'BSE'] as const).map(ex => {
+          const m = meta[ex]
+          return (
+            <div key={ex} className="rounded-xl border border-line/80 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className={`chip !py-0 text-[11px] ${ex === 'BSE' ? 'text-warn' : 'text-accent'}`}>{ex}</span>
+                <span className="text-xs text-mute">{m ? `${m.stocks.toLocaleString('en-IN')} stocks` : 'Not downloaded'}</span>
+              </div>
+              <p className="mt-1.5 text-xs text-mute">{m ? `As of ${m.date}. Saved ${dateTime(m.at)}.` : 'Downloads about 6 MB the first time, then only small daily updates.'}</p>
+              <button className="btn btn-sm mt-2" disabled={busy} onClick={() => void loadMarketData([ex])}>{busy ? 'Working…' : m ? 'Check for updates' : `Download ${ex}`}</button>
+            </div>
+          )
+        })}
+      </div>
+      {market.message && <p className={`text-xs ${market.status === 'error' ? 'text-down' : 'text-warn'}`}>{market.message}</p>}
+      {total > 0 && (
+        <button className="btn btn-sm text-down" disabled={busy} onClick={() => { if (confirm('Remove the downloaded market-wide data from this device? You can download it again.')) void clear() }}>Remove downloaded data</button>
       )}
     </section>
   )

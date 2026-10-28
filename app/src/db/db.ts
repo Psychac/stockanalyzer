@@ -76,7 +76,25 @@ export const cacheFor = (source: DataSource): CandleCache => ({
 /** Not part of export/import: it is public market data that can be re-downloaded. */
 export const marketCache: MarketCache = {
   get: async (ex: Exchange) => { const r = await db.market.get(ex); return r ? { history: r.history, date: r.date, rev: r.rev } : undefined },
-  put: async (ex, history, date, rev) => { await db.market.put({ ex, history, date, rev }) },
+  put: async (ex, history, date, rev) => {
+    await db.market.put({ ex, history, date, rev })
+    // A small summary for Settings, so it does not have to read megabytes to say what is on the device.
+    await db.settings.put({ key: `marketMeta:${ex}`, value: { date, rev: rev ?? 0, stocks: Object.keys(history.stocks).length, at: Date.now() } })
+  },
+}
+
+export interface MarketMeta { date: string; rev: number; stocks: number; at: number }
+export async function loadMarketMeta(): Promise<Partial<Record<Exchange, MarketMeta>>> {
+  const out: Partial<Record<Exchange, MarketMeta>> = {}
+  for (const ex of ['NSE', 'BSE'] as const) {
+    const r = await db.settings.get(`marketMeta:${ex}`)
+    if (r) out[ex] = r.value as MarketMeta
+  }
+  return out
+}
+export async function clearMarketCache() {
+  await db.market.clear()
+  await db.settings.bulkDelete(['marketMeta:NSE', 'marketMeta:BSE'])
 }
 
 export async function loadCredentials(): Promise<StoredCredentials | null> {

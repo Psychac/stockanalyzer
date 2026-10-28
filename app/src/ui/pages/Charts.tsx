@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../../store'
 import { STRATEGIES, sizePosition } from '../../domain/trade'
-import { DataBadge, Disclaimer, NoData, PageHeader, ScoreRing, Skeleton, StarButton, StateBadge } from '../components/bits'
+import { DataBadge, Disclaimer, ExchangeTag, NoData, PageHeader, ScoreRing, Skeleton, StarButton, StateBadge } from '../components/bits'
 import { PriceChart, type ChartOptions } from '../components/PriceChart'
 import { dateOnly, pct, price, rupees, timeOnly, tone } from '../format'
 
@@ -66,10 +66,10 @@ export function Charts() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <select className="field !w-auto min-w-48" value={id} onChange={e => openChart(e.target.value)} aria-label="Instrument">
-          {[...instruments, ...[...extras.values()].map(e => e.instrument)].map(i => <option key={i.id} value={i.id}>{i.symbol} — {i.name}</option>)}
+          {[...instruments, ...[...extras.values()].map(e => e.instrument)].map(i => <option key={i.id} value={i.id}>{i.exchange} · {i.symbol} — {i.name}</option>)}
         </select>
         <div className="flex items-baseline gap-3">
-          <span className="num text-2xl font-semibold">₹{price(last.c)}</span>
+          <ExchangeTag id={set.instrument.id} className="self-center !text-xs !py-0.5" /><span className="num text-2xl font-semibold">₹{price(last.c)}</span>
           <span className={`num text-sm font-medium ${tone(chg)}`}>{pct(chg)}</span>
           <span className="text-xs text-mute">{last.closed ? 'Close' : 'Last'} · {dateOnly(last.t)}{set.instrument.sector !== 'Other' ? ` · ${set.instrument.sector}` : ''}</span>
           {live && <span className="chip border-up/40 text-up"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-up" />LIVE{feed.updatedAt ? ` · ${timeOnly(feed.updatedAt)}` : ''}</span>}

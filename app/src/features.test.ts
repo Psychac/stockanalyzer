@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { sessionOpen } from './domain/time'
 import type { Candle } from './domain/types'
-import { indexLevel } from './indices'
+import { INDEX_ORDER, indexLevel, isGauge, sortLevels } from './indices'
 import { UNIVERSE } from './providers/universe'
 import { BREEZE_CODES, BREEZE_INDICES, lookupCode, registerExtra } from './providers/breeze/codes'
 import { adoptRow, loadMaster, rankMatches } from './providers/breeze/master'
@@ -154,5 +154,21 @@ describe('BreezeStream with indices and added stocks', () => {
     stream.add(tcs)
     stream.add({ ...tcs, id: 'NSE:NOPE', symbol: 'NOPE' })
     expect(emitted).toEqual([['join', ['4.1!11536']]])
+  })
+})
+
+describe('index display order', () => {
+  it('puts the headline indices first, the volatility gauge last, and unknown ones at the end, whatever order they arrive in', () => {
+    const ids = ['NSE:INDIAVIX', 'NSE:XYZ', 'BSE:SENSEX', 'NSE:NIFTYBANK', 'NSE:NIFTY50', 'BSE:BSE500', 'NSE:NIFTY500']
+    expect(sortLevels(ids.map(id => ({ id }))).map(x => x.id)).toEqual(['NSE:NIFTY50', 'BSE:SENSEX', 'NSE:NIFTYBANK', 'NSE:NIFTY500', 'BSE:BSE500', 'NSE:INDIAVIX', 'NSE:XYZ'])
+    expect(INDEX_ORDER[0]).toBe('NSE:NIFTY50')
+    expect(INDEX_ORDER.at(-1)).toBe('NSE:INDIAVIX')
+  })
+  it('does not mutate its input, and treats only the VIX as a gauge', () => {
+    const input = [{ id: 'NSE:INDIAVIX' }, { id: 'NSE:NIFTY50' }]
+    sortLevels(input)
+    expect(input[0].id).toBe('NSE:INDIAVIX')
+    expect(isGauge('NSE:INDIAVIX')).toBe(true)
+    expect(isGauge('NSE:NIFTY50')).toBe(false)
   })
 })

@@ -4,7 +4,7 @@ import { runScanner, runScannerLazy, scannerSchema, type ScannerConfig, type Sca
 import { PRESETS, isPreset } from './domain/presets'
 import { isMarketOpen } from './domain/time'
 import {
-  DEFAULT_SETTINGS, cacheFor, marketCache, clearSession, db, loadBreeze, loadCredentials, loadDataSource, loadSettings, saveBreeze, saveCredentials, saveDataSource, saveSettings,
+  DEFAULT_SETTINGS, cacheFor, clearMarketCache, loadMarketMeta, marketCache, type MarketMeta, clearSession, db, loadBreeze, loadCredentials, loadDataSource, loadSettings, saveBreeze, saveCredentials, saveDataSource, saveSettings,
   type Settings, type ShortlistItem, type ShortlistStatus,
 } from './db/db'
 import { demoProvider } from './providers/demo'
@@ -23,7 +23,7 @@ import type { Exchange, History } from '../api/_lib/data/history'
 import { loadMaster } from './providers/breeze/master'
 import type { Candle } from './domain/types'
 import { adoptRow, type MasterRow } from './providers/breeze/master'
-import { indexLevel, type IndexLevel } from './indices'
+import { indexLevel, sortLevels, type IndexLevel } from './indices'
 import { lastSessionClose } from './domain/time'
 import { beginLogin as beginBreezeLogin, completeLoginFromUrl as completeBreezeLogin, defaultAppKey, exchangeSession, helperInfo, type BreezeSession } from './providers/breeze/session'
 import { loadMarket } from './providers/loader'
@@ -75,6 +75,11 @@ interface State {
   /** Every liquid NSE and BSE stock (symbol, name, ISIN, industry), for search and sector filters. Loaded on demand, tens of KB. */
   searchIndex: SearchItem[] | null
   marketSectors: string[]
+  /** Recent closes per index, for the dashboard's sparkline. */
+  indexSpark: Record<string, number[]>
+  /** What is saved on this device for each exchange. */
+  marketMeta: Partial<Record<Exchange, MarketMeta>>
+  clearMarketData: () => Promise<void>
   userScanners: ScannerConfig[]
   shortlist: ShortlistItem[]
   settings: Settings
@@ -178,7 +183,7 @@ export const useApp = create<State>((set, get) => {
 
   function recomputeIndices(now = Date.now()) {
     const ticks = new Map((streaming?.liveIndices() ?? []).map(t => [t.id, t]))
-    const levels = indexList.map(ix => indexLevel(ix.id, ix.name, eodIndexCandles.get(ix.id), ticks.get(ix.id), now)).filter((l): l is IndexLevel => !!l)
+    const levels = sortLevels(indexList.map(ix => indexLevel(ix.id, ix.name, eodIndexCandles.get(ix.id), ticks.get(ix.id), now)).filter((l): l is IndexLevel => !!l))
     const prev = get().indexLevels
     const same = levels.length === prev.length && levels.every((l, i) => l.ltp === prev[i].ltp && l.live === prev[i].live && l.prevClose === prev[i].prevClose)
     if (!same) set({ indexLevels: levels })
@@ -192,6 +197,7 @@ export const useApp = create<State>((set, get) => {
       if (!items.length) return
       for (const i of items) { backendIndices.set(i.id, i.candles); eodIndexCandles.set(i.id, i.candles) }
       indexList = items.map(({ id, name }) => ({ id, name }))
+      set({ indexSpark: Object.fromEntries(items.map(i => [i.id, i.candles.slice(-60).map(c => c.c)])) })
       recomputeIndices()
     } catch { /* the strip falls back to Breeze, or stays empty */ }
   }
@@ -289,6 +295,8 @@ export const useApp = create<State>((set, get) => {
     scan: null,
     searchIndex: null,
     marketSectors: [],
+    indexSpark: {},
+    marketMeta: {},
     userScanners: [],
     shortlist: [],
     settings: DEFAULT_SETTINGS,
@@ -298,6 +306,7 @@ export const useApp = create<State>((set, get) => {
       window.addEventListener('hashchange', () => set({ route: fromHash() }))
       await get().reloadUserData()
       indicesReady = loadMarketIndices()
+      void loadMarketMeta().then(marketMeta => set({ marketMeta }))
       void get().loadSearchIndex()
       // Shortlisted stocks from the market-wide data need that data to show prices; read it from this device, no download.
       const wantEx = [...new Set(get().shortlist.map(s => s.instrumentId).filter(id => id.startsWith('BSE:') || (id.startsWith('NSE:') && !UNIVERSE.some(u => u.id === id))).map(id => id.slice(0, 3) as Exchange))]
@@ -499,6 +508,7 @@ export const useApp = create<State>((set, get) => {
         }
         nseNames ??= await loadMaster().then(rows => new Map(rows.map(r => [r.symbol, r.name]))).catch(() => new Map<string, string>())
         set({ market: { status: 'ready', message: null, progress: null, date: m.latestDate, counts: countsOf() } })
+        void loadMarketMeta().then(marketMeta => set({ marketMeta }))
         void get().loadSearchIndex()
         return true
       } catch (e) {
@@ -516,6 +526,14 @@ export const useApp = create<State>((set, get) => {
         set({ market: { status: 'error', message: errText(e), progress: null, date: null, counts: countsOf() } })
         return false
       }
+    },
+
+    async clearMarketData() {
+      await clearMarketCache()
+      for (const ex of ['NSE', 'BSE'] as const) { delete marketHist[ex]; delete marketDate[ex] }
+      // Stocks opened from the market data are gone with it; tracked ones and Breeze-fetched ones stay.
+      const extras = new Map([...get().extras].filter(([, v]) => v.source !== 'market'))
+      set({ marketMeta: {}, extras, market: { status: 'idle', message: null, progress: null, date: null, counts: {} } })
     },
 
     async loadSearchIndex() {

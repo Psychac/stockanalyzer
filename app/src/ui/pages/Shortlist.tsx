@@ -1,6 +1,6 @@
 import { STATUSES, type ShortlistStatus } from '../../db/db'
 import { useApp } from '../../store'
-import { Empty, PageHeader, Sparkline } from '../components/bits'
+import { Empty, ExchangeTag, PageHeader, Sparkline } from '../components/bits'
 import { dateOnly, pct, price, tone } from '../format'
 
 export function Shortlist() {
@@ -40,7 +40,7 @@ export function Shortlist() {
                   // A stock from the market-wide data whose files are not on this device yet.
                   return (
                     <article key={item.instrumentId} className="card p-4">
-                      <div className="font-semibold">{item.instrumentId.replace(/^\w+:/, '')}</div>
+                      <div className="flex items-center gap-2 font-semibold">{item.instrumentId.replace(/^\w+:/, '')}<ExchangeTag id={item.instrumentId} /></div>
                       <p className="mt-1 text-xs text-mute">{marketStatus === 'loading' ? 'Loading market data…' : 'Prices need the market-wide data. Run a scan on All NSE or All BSE in Discover to load it.'}</p>
                       <button className="btn btn-sm btn-ghost mt-2 text-down" onClick={() => void remove(item.instrumentId)}>Remove</button>
                     </article>
@@ -53,7 +53,7 @@ export function Shortlist() {
                   <article key={item.instrumentId} className="card p-4">
                     <div className="flex cursor-pointer items-start justify-between gap-2" onClick={() => openChart(item.instrumentId)}>
                       <div className="min-w-0">
-                        <div className="font-semibold">{set.instrument.symbol}</div>
+                        <div className="flex items-center gap-2 font-semibold">{set.instrument.symbol}<ExchangeTag id={item.instrumentId} /></div>
                         <div className="truncate text-xs text-mute">{set.instrument.name}</div>
                       </div>
                       <div className="text-right"><div className="num font-medium">₹{price(last)}</div><div className={`num text-xs ${tone(chg)}`}>{pct(chg)}</div></div>

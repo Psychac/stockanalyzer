@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { allScanners, useApp } from '../../store'
 import { PRESETS, REQUIRES_LABEL, blankScanner, duplicateScanner, isPreset } from '../../domain/presets'
 import { scannerSchema, ruleLabel, fmtNum, type Group, type NodeResult, type Node, type ScannerConfig, type ScanResult } from '../../domain/scanner'
-import { DataBadge, Disclaimer, Empty, PageHeader, ScoreRing, StarButton } from '../components/bits'
+import { DataBadge, Disclaimer, Empty, ExchangeTag, PageHeader, ScoreRing, StarButton } from '../components/bits'
 import { ScannerBuilder } from '../components/ScannerBuilder'
 import { dateTime, pct, price, tone } from '../format'
 
@@ -42,7 +42,7 @@ function ResultRow({ r, source }: { r: ScanResult; source: string }) {
       <div className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition hover:bg-panel2/40" onClick={() => setOpen(!open)}>
         <ScoreRing score={r.matched ? r.score : null} />
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2"><span className="truncate font-semibold">{r.symbol}</span><span className={`chip !py-0 text-[10px] ${r.instrumentId.startsWith('BSE:') ? 'text-warn' : 'text-accent'}`}>{r.instrumentId.startsWith('BSE:') ? 'BSE' : 'NSE'}</span><span className="chip hidden !py-0 text-[10px] sm:inline-flex">{r.sector}</span></div>
+          <div className="flex min-w-0 items-center gap-2"><span className="truncate font-semibold">{r.symbol}</span><ExchangeTag id={r.instrumentId} /><span className="chip hidden !py-0 text-[10px] sm:inline-flex">{r.sector}</span></div>
           <div className="truncate text-xs text-mute">{r.excludedBy ? `Excluded: ${r.excludedBy}` : r.name}</div>
         </div>
         <div className="num text-right"><div className="text-sm">₹{price(r.close)}</div><div className={`text-xs ${tone(r.changePct)}`}>{pct(r.changePct)}</div></div>
@@ -151,7 +151,7 @@ export function Discover() {
       <PageHeader
         title="Discover"
         subtitle="Scanners are saved configurations run by one shared engine. Built-in presets stay intact; edit a copy."
-        actions={<>{universe !== 'tracked' ? <span className="chip border-accent/40 text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent" />EOD · SHARED DATA</span> : <DataBadge set={benchmark} />}<button className="btn btn-primary" onClick={() => setEditing({ cfg: blankScanner(), isNew: true })}>+ New scanner</button></>}
+        actions={<>{universe !== 'tracked' ? <span className="chip border-accent/40 text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent" />EOD · SHARED DATA</span> : <span className="hidden md:inline-flex"><DataBadge set={benchmark} /></span>}<button className="btn btn-primary" onClick={() => setEditing({ cfg: blankScanner(), isNew: true })}>+ New scanner</button></>}
       />
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
         <div className="lg:hidden">

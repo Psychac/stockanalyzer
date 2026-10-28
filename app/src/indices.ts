@@ -12,6 +12,24 @@ export interface IndexLevel {
   at: number
 }
 
+/**
+ * Dashboard order: the two headline indices first (one per exchange), then sector and size indices, then the broad market
+ * indices, and the volatility gauge last since it is not a price index. Anything unknown goes at the end.
+ */
+export const INDEX_ORDER = [
+  'NSE:NIFTY50', 'BSE:SENSEX',
+  'NSE:NIFTYBANK', 'NSE:NIFTYIT', 'NSE:NIFTYFIN', 'BSE:BANKEX', 'NSE:NIFTYMID',
+  'NSE:NIFTY500', 'BSE:BSE500',
+  'NSE:INDIAVIX',
+]
+export const sortLevels = <T extends { id: string }>(levels: T[]): T[] => {
+  const rank = (id: string) => { const i = INDEX_ORDER.indexOf(id); return i < 0 ? INDEX_ORDER.length : i }
+  return [...levels].sort((a, b) => rank(a.id) - rank(b.id))
+}
+
+/** A volatility gauge: a rise is not "good", so it is shown without up or down colouring. */
+export const isGauge = (id: string) => id === 'NSE:INDIAVIX'
+
 export interface LiveIndexTick { ltp: number; prevClose: number | null; at: number }
 
 /**

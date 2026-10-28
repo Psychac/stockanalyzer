@@ -4,6 +4,7 @@ import { STATE_LABEL, type SignalState } from '../../domain/trade'
 import { useApp } from '../../store'
 import { isMarketOpen } from '../../domain/time'
 import { dateOnly, pct, price, timeOnly, tone } from '../format'
+import { isGauge } from '../../indices'
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
   return (
@@ -179,6 +180,13 @@ export const Disclaimer = () => (
   </p>
 )
 
+/** Which exchange a stock or index is from. The same company can trade at different prices on NSE and BSE. */
+export const exchangeOf = (id: string): 'NSE' | 'BSE' => (id.startsWith('BSE:') ? 'BSE' : 'NSE')
+export function ExchangeTag({ id, className = '' }: { id: string; className?: string }) {
+  const ex = exchangeOf(id)
+  return <span className={`chip !py-0 text-[10px] ${ex === 'BSE' ? 'text-warn' : 'text-accent'} ${className}`} title={ex === 'BSE' ? 'Bombay Stock Exchange' : 'National Stock Exchange'}>{ex}</span>
+}
+
 export function IndexStrip() {
   const levels = useApp(s => s.indexLevels)
   const source = useApp(s => s.source)
@@ -186,20 +194,24 @@ export function IndexStrip() {
   // Demo data must never sit beside real index levels.
   if (source === 'demo' || status !== 'ready') return null
   if (levels.length === 0) {
-    return <p className="mb-4 text-xs text-mute">Index levels are not available from Breeze yet. They appear once Breeze returns daily bars for the Nifty indices.</p>
+    return <p className="mb-4 text-xs text-mute">Index levels are not available yet. They appear once the shared market data or Breeze provides them.</p>
   }
   return (
-    <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0">
+    <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:grid md:grid-cols-[repeat(auto-fill,minmax(8.25rem,1fr))] md:overflow-visible md:px-0" aria-label="Market indices">
       {levels.map(l => {
         const chg = l.prevClose ? (l.ltp / l.prevClose - 1) * 100 : null
+        const gauge = isGauge(l.id)
         return (
-          <div key={l.id} className="card min-w-[8.5rem] shrink-0 px-3 py-2.5" title={l.live ? 'Live tick' : 'Last daily close'}>
+          <div key={l.id} className="card min-w-[8.25rem] shrink-0 px-3 py-2.5 md:min-w-0" title={`${l.name} (${exchangeOf(l.id)}) · ${l.live ? 'live tick' : 'last daily close'}`}>
             <div className="flex items-center justify-between gap-2 text-[11px] text-mute">
-              <span className="truncate">{l.name}</span>
-              <span className={`flex items-center gap-1 ${l.live ? 'text-up' : ''}`}><span className={`h-1.5 w-1.5 rounded-full ${l.live ? 'animate-pulse bg-up' : 'bg-mute'}`} />{l.live ? 'LIVE' : 'EOD'}</span>
+              <span className="flex min-w-0 items-center gap-1.5"><span className="truncate">{l.name}</span></span>
+              <span className={`flex shrink-0 items-center gap-1 ${l.live ? 'text-up' : ''}`}><span className={`h-1.5 w-1.5 rounded-full ${l.live ? 'animate-pulse bg-up' : 'bg-mute'}`} />{l.live ? 'LIVE' : 'EOD'}</span>
             </div>
             <div className="num mt-0.5 text-base font-semibold">{price(l.ltp)}</div>
-            <div className={`num text-xs font-medium ${chg === null ? 'text-mute' : tone(chg)}`}>{chg === null ? '—' : pct(chg)}</div>
+            <div className="flex items-center justify-between">
+              <span className={`num text-xs font-medium ${chg === null || gauge ? 'text-mute' : tone(chg)}`}>{chg === null ? '—' : pct(chg)}</span>
+              <ExchangeTag id={l.id} />
+            </div>
           </div>
         )
       })}
