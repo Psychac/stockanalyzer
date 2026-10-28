@@ -4,6 +4,7 @@ import { STRATEGIES, sizePosition } from '../../domain/trade'
 import { DataBadge, Disclaimer, ExchangeTag, NoData, PageHeader, ScoreRing, Skeleton, StarButton, StateBadge } from '../components/bits'
 import { PriceChart, type ChartOptions } from '../components/PriceChart'
 import { dateOnly, pct, price, rupees, timeOnly, tone } from '../format'
+import { indexStats } from '../../indices'
 
 const DEFAULT_OPTS: ChartOptions = { sma20: false, sma50: true, sma200: true, ema20: false, volume: true, rsi: false, macd: false }
 const TOGGLES: { key: keyof ChartOptions; label: string }[] = [
@@ -20,7 +21,6 @@ export function Charts() {
   const extras = useApp(s => s.extras)
   const extraStatus = useApp(s => s.extraStatus)
   const feed = useApp(s => s.feed)
-  const openChart = useApp(s => s.openChart)
 
   const [opts, setOpts] = useState<ChartOptions>(() => {
     try { return { ...DEFAULT_OPTS, ...JSON.parse(localStorage.getItem('chartOpts') ?? '{}') } } catch { return DEFAULT_OPTS }
@@ -32,7 +32,8 @@ export function Charts() {
   const id = chartSymbol ?? instruments[0]?.id
   const set = id ? sets.get(id) ?? extras.get(id) : undefined
   const strategy = STRATEGIES.find(s => s.id === strategyId)!
-  const plan = useMemo(() => (set ? strategy.evaluate(set, { rr: [settings.rr1, settings.rr2] }) : null), [set, strategy, settings.rr1, settings.rr2])
+  const isIndex = set?.instrument.kind === 'index'
+  const plan = useMemo(() => (set && !isIndex ? strategy.evaluate(set, { rr: [settings.rr1, settings.rr2] }) : null), [set, isIndex, strategy, settings.rr1, settings.rr2])
   const sizing = useMemo(() => (plan && plan.riskPerShare > 0 ? sizePosition({ capital: settings.capital, riskPct: settings.riskPct, entry: plan.entry, stop: plan.stop, maxPositionPct: settings.maxPositionPct, roundTripCostPct: settings.roundTripCostPct }) : null), [plan, settings])
 
   if (status === 'loading') return <><PageHeader title="Charts" /><Skeleton className="h-[480px]" /></>
@@ -48,6 +49,7 @@ export function Charts() {
       </>
     )
   }
+  if (set && isIndex) return <IndexView set={set} opts={opts} setOpts={setOpts} />
   if (status === 'error' || !set || !plan) return <><PageHeader title="Charts" /><NoData /></>
 
   const c = set.candles
@@ -65,9 +67,7 @@ export function Charts() {
       <PageHeader title="Charts" actions={<DataBadge set={set} />} />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <select className="field !w-auto min-w-48" value={id} onChange={e => openChart(e.target.value)} aria-label="Instrument">
-          {[...instruments, ...[...extras.values()].map(e => e.instrument)].map(i => <option key={i.id} value={i.id}>{i.exchange} · {i.symbol} — {i.name}</option>)}
-        </select>
+        <InstrumentPicker id={id} />
         <div className="flex items-baseline gap-3">
           <ExchangeTag id={set.instrument.id} className="self-center !text-xs !py-0.5" /><span className="num text-2xl font-semibold">₹{price(last.c)}</span>
           <span className={`num text-sm font-medium ${tone(chg)}`}>{pct(chg)}</span>
@@ -158,5 +158,96 @@ export function Charts() {
 }
 
 const Row = ({ k, v, cls = '' }: { k: string; v: string; cls?: string }) => (
+  <div><dt className="label">{k}</dt><dd className={`mt-0.5 font-medium ${cls}`}>{v}</dd></div>
+)
+
+/** One picker for indices and stocks: indices come from the dashboard's list, stocks from the tracked set plus anything opened. */
+function InstrumentPicker({ id }: { id: string | undefined }) {
+  const instruments = useApp(s => s.instruments)
+  const extras = useApp(s => s.extras)
+  const levels = useApp(s => s.indexLevels)
+  const openChart = useApp(s => s.openChart)
+  const openIndex = useApp(s => s.openIndex)
+  const stocks = [...instruments, ...[...extras.values()].map(e => e.instrument).filter(i => i.kind !== 'index')]
+  return (
+    <select className="field !w-auto min-w-48" value={id} aria-label="Instrument" onChange={e => (levels.some(l => l.id === e.target.value) ? openIndex(e.target.value) : openChart(e.target.value))}>
+      {levels.length > 0 && <optgroup label="Indices">{levels.map(l => <option key={l.id} value={l.id}>{l.id.startsWith('BSE:') ? 'BSE' : 'NSE'} · {l.name}</option>)}</optgroup>}
+      <optgroup label="Stocks">{stocks.map(i => <option key={i.id} value={i.id}>{i.exchange} · {i.symbol} — {i.name}</option>)}</optgroup>
+    </select>
+  )
+}
+
+const INDEX_TOGGLES = TOGGLES.filter(t => t.key !== 'volume')
+
+/** An index is not tradable, so no trade plan or sizing: the picture, the levels, and how it has been trending. */
+function IndexView({ set, opts, setOpts }: { set: import('../../domain/types').CandleSet; opts: ChartOptions; setOpts: (o: ChartOptions) => void }) {
+  const level = useApp(s => s.indexLevels.find(l => l.id === set.instrument.id))
+  const stats = indexStats(set.candles)
+  const c = set.candles
+  const last = c[c.length - 1]
+  const shown = level?.ltp ?? last.c
+  const chg = level?.prevClose ? (level.ltp / level.prevClose - 1) * 100 : stats?.changePct ?? null
+  const extraPanes = Number(opts.rsi) + Number(opts.macd)
+  const chartOpts = { ...opts, volume: false }
+  return (
+    <>
+      <PageHeader title="Charts" actions={<DataBadge set={set} />} />
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <InstrumentPicker id={set.instrument.id} />
+        <div className="flex items-baseline gap-3">
+          <ExchangeTag id={set.instrument.id} className="self-center !text-xs !py-0.5" /><span className="num text-2xl font-semibold">{price(shown)}</span>
+          {chg !== null && <span className={`num text-sm font-medium ${tone(chg)}`}>{pct(chg)}</span>}
+          <span className="text-xs text-mute">{level?.live ? 'Live' : 'Close'} · {dateOnly(level?.live ? level.at : last.t)} · points</span>
+          {level?.live && <span className="chip border-up/40 text-up"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-up" />LIVE</span>}
+        </div>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+        <section className="card p-3">
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {INDEX_TOGGLES.map(t => (
+              <button key={t.key} onClick={() => setOpts({ ...opts, [t.key]: !opts[t.key] })} className={`chip cursor-pointer transition ${opts[t.key] ? 'border-accent/60 bg-accent/10 text-accent' : 'hover:text-ink'}`}>{t.label}</button>
+            ))}
+          </div>
+          <PriceChart set={set} options={chartOpts} plan={null} height={420 + extraPanes * 130} />
+          <div className="mt-1 flex justify-between px-1 text-[10px] text-mute"><span>Daily candles · {c.length} bars · updates at each close</span><span>Chart by TradingView</span></div>
+        </section>
+        {stats && (
+          <aside className="space-y-4">
+            <section className="card p-5">
+              <h3 className="mb-3 font-semibold">Range</h3>
+              <dl className="num grid grid-cols-2 gap-x-4 gap-y-2.5 text-sm">
+                <Stat k={`High (${Math.min(252, stats.bars)} sessions)`} v={price(stats.high)} />
+                <Stat k="Low" v={price(stats.low)} />
+                <Stat k="From high" v={pct(stats.fromHighPct)} cls={tone(stats.fromHighPct)} />
+                <Stat k="Previous close" v={stats.prev === null ? '—' : price(stats.prev)} />
+              </dl>
+            </section>
+            <section className="card p-5">
+              <h3 className="mb-3 font-semibold">Returns</h3>
+              <dl className="num grid grid-cols-2 gap-x-4 gap-y-2.5 text-sm">
+                {stats.returns.map(r => <Stat key={r.label} k={r.label} v={r.pct === null ? 'not enough history' : pct(r.pct)} cls={r.pct === null ? 'text-mute' : tone(r.pct)} />)}
+              </dl>
+            </section>
+            <section className="card p-5">
+              <h3 className="mb-3 font-semibold">Trend</h3>
+              <ul className="space-y-2 text-sm">
+                {([['SMA 50', stats.sma50], ['SMA 200', stats.sma200]] as const).map(([label, v]) => (
+                  <li key={label} className="flex items-center justify-between gap-3">
+                    <span>{label} <span className="num text-mute">{v === null ? '' : price(v)}</span></span>
+                    {v === null ? <span className="text-mute">not enough history</span> : <span className={stats.last > v ? 'text-up' : 'text-down'}>{stats.last > v ? 'Above' : 'Below'}</span>}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-[11px] leading-snug text-mute">An index cannot be bought directly, so there is no trade plan here. Levels are index points, not rupees.</p>
+            </section>
+          </aside>
+        )}
+      </div>
+      <div className="mt-6"><Disclaimer /></div>
+    </>
+  )
+}
+
+const Stat = ({ k, v, cls = '' }: { k: string; v: string; cls?: string }) => (
   <div><dt className="label">{k}</dt><dd className={`mt-0.5 font-medium ${cls}`}>{v}</dd></div>
 )

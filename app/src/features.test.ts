@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { sessionOpen } from './domain/time'
 import type { Candle } from './domain/types'
-import { INDEX_ORDER, indexLevel, isGauge, sortLevels } from './indices'
+import { INDEX_ORDER, indexLevel, indexStats, isGauge, sortLevels } from './indices'
 import { UNIVERSE } from './providers/universe'
 import { BREEZE_CODES, BREEZE_INDICES, lookupCode, registerExtra } from './providers/breeze/codes'
 import { adoptRow, loadMaster, rankMatches } from './providers/breeze/master'
@@ -172,3 +172,33 @@ describe('index display order', () => {
     expect(isGauge('NSE:NIFTY50')).toBe(false)
   })
 })
+
+describe('index chart stats', () => {
+  const series = (n: number, f: (i: number) => number): Candle[] => Array.from({ length: n }, (_, i) => bar(`2025-01-${String(1 + (i % 28)).padStart(2, '0')}`, f(i)))
+  it('computes range, returns and trend from closes', () => {
+    const st = indexStats(series(260, i => 100 + i))! // rises by 1 a session
+    expect(st.last).toBe(359)
+    expect(st.high).toBe(359)
+    expect(st.fromHighPct).toBe(0)
+    expect(st.low).toBe(108) // lowest of the last 252 closes
+    expect(st.returns.map(r => r.label)).toEqual(['1 month', '3 months', '6 months', '1 year'])
+    expect(st.returns[0].pct).toBeCloseTo((359 / 338 - 1) * 100, 6) // 21 sessions back
+    expect(st.sma50).toBeCloseTo(mean(Array.from({ length: 50 }, (_, i) => 359 - i)), 6)
+    expect(st.sma200).not.toBeNull()
+    expect(st.last > st.sma50!).toBe(true)
+  })
+  it('says "not enough history" rather than guessing for short series', () => {
+    const st = indexStats(series(30, i => 100 + i))!
+    expect(st.returns.find(r => r.label === '1 year')!.pct).toBeNull()
+    expect(st.returns.find(r => r.label === '1 month')!.pct).not.toBeNull()
+    expect(st.sma50).toBeNull()
+    expect(st.sma200).toBeNull()
+    expect(indexStats(series(1, () => 1))).toBeNull()
+  })
+  it('reports distance below the high when the index has fallen', () => {
+    const st = indexStats(series(10, i => (i < 5 ? 100 + i : 90)))!
+    expect(st.high).toBe(104)
+    expect(st.fromHighPct).toBeCloseTo((90 / 104 - 1) * 100, 6)
+  })
+})
+const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length

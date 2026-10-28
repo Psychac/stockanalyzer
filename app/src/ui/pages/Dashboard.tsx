@@ -15,6 +15,7 @@ export function Dashboard() {
   const openChart = useApp(s => s.openChart)
   const go = useApp(s => s.go)
   const setFor = useApp(s => s.setFor)
+  const openIndex = useApp(s => s.openIndex)
   const indexLevels = useApp(s => s.indexLevels)
   const indexSpark = useApp(s => s.indexSpark)
   const source = useApp(s => s.source)
@@ -71,7 +72,7 @@ export function Dashboard() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         {nifty ? (
-          <section className="card flex items-center justify-between gap-4 p-5">
+          <section className="card flex cursor-pointer items-center justify-between gap-4 p-5 transition hover:!border-accent/50" role="button" tabIndex={0} onClick={() => openIndex('NSE:NIFTY50')} onKeyDown={e => { if (e.key === 'Enter') openIndex('NSE:NIFTY50') }}>
             <div>
               <div className="label flex items-center gap-2">Nifty 50 <ExchangeTag id="NSE:NIFTY50" /> <span className={nifty.live ? 'text-up' : ''}>{nifty.live ? 'LIVE' : 'EOD'}</span></div>
               <div className="num mt-1 text-3xl font-semibold">{price(nifty.ltp)}</div>

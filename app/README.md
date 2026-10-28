@@ -74,6 +74,9 @@ work with any data source, including none.
 - **Sectors** come from the free Nifty Total Market list (about 750 companies), matched by ISIN, so only about a third of stocks
   have an industry. The rest are Unclassified, and choosing a sector leaves them out.
 - The backend filters BSE to real shares (series A, B, T, X, XT, Z and SME, ISIN starting INE), dropping ETFs, funds and bonds.
+- **Index charts:** click any index tile (or the big Nifty 50 card) on the dashboard, or pick one under Indices in the chart picker.
+  An index chart shows candles, moving averages, range, returns and trend, and deliberately no trade plan, because an index cannot be
+  bought directly. It is end-of-day: a live Breeze tick updates the displayed level but not the candles.
 - Backend setup (Blob store, `CRON_SECRET`, first backfill) is in [`../docs/backend-design.md`](../docs/backend-design.md).
 - `npm run dev` proxies `/api/data` to the deployed site; set `MARKET_DATA_ORIGIN` to use another deployment.
 

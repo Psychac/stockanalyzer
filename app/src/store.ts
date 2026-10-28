@@ -90,6 +90,8 @@ interface State {
   openChart: (instrumentId: string) => void
   /** Open any NSE stock from search. Outside the tracked universe it is fetched on demand (Breeze only). */
   openStock: (row: MasterRow | { symbol: string }) => Promise<void>
+  /** Chart of a market index (Nifty 50, Sensex, ...). End-of-day. */
+  openIndex: (id: string) => void
   loadMarket: () => Promise<void>
   loadMarketData: (exchanges: Exchange[]) => Promise<boolean>
   /** `listedOnce` skips a BSE listing when the same company (by ISIN) is also on NSE, so "Both" does not count it twice. */
@@ -483,6 +485,18 @@ export const useApp = create<State>((set, get) => {
         if (cs) set({ extras: new Map(get().extras).set(id, cs) })
       }
       set({ chartSymbol: id })
+      get().go('charts')
+    },
+
+    openIndex(id) {
+      const candles = eodIndexCandles.get(id) ?? backendIndices.get(id)
+      const meta = indexList.find(i => i.id === id)
+      if (!candles || candles.length < 2 || !meta) return
+      const cs: CandleSet = {
+        instrument: { id, exchange: id.startsWith('BSE:') ? 'BSE' : 'NSE', symbol: meta.name, name: `${meta.name} index`, sector: 'Index', kind: 'index' },
+        timeframe: '1D', candles, source: 'market', asOf: candles[candles.length - 1].t,
+      }
+      set({ extras: new Map(get().extras).set(id, cs), chartSymbol: id })
       get().go('charts')
     },
 

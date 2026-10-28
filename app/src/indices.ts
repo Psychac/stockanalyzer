@@ -27,6 +27,42 @@ export const sortLevels = <T extends { id: string }>(levels: T[]): T[] => {
   return [...levels].sort((a, b) => rank(a.id) - rank(b.id))
 }
 
+export interface IndexStats {
+  last: number
+  prev: number | null
+  changePct: number | null
+  /** Highest and lowest close over up to the last 252 sessions (about a year). */
+  high: number
+  low: number
+  fromHighPct: number
+  /** Percent return over about 1, 3, 6 and 12 months of sessions; null when there is not that much history. */
+  returns: { label: string; pct: number | null }[]
+  sma50: number | null
+  sma200: number | null
+  bars: number
+}
+
+const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length
+
+/** What an index chart shows beside the picture. Closes only: indices have no volume, and no one buys an index directly. */
+export function indexStats(candles: Candle[]): IndexStats | null {
+  const n = candles.length
+  if (n < 2) return null
+  const closes = candles.map(c => c.c)
+  const last = closes[n - 1]
+  const year = closes.slice(-252)
+  const ret = (k: number) => (n > k && closes[n - 1 - k] > 0 ? (last / closes[n - 1 - k] - 1) * 100 : null)
+  const high = Math.max(...year)
+  return {
+    last, prev: closes[n - 2], changePct: closes[n - 2] > 0 ? (last / closes[n - 2] - 1) * 100 : null,
+    high, low: Math.min(...year), fromHighPct: (last / high - 1) * 100,
+    returns: [{ label: '1 month', pct: ret(21) }, { label: '3 months', pct: ret(63) }, { label: '6 months', pct: ret(126) }, { label: '1 year', pct: ret(251) }],
+    sma50: n >= 50 ? mean(closes.slice(-50)) : null,
+    sma200: n >= 200 ? mean(closes.slice(-200)) : null,
+    bars: n,
+  }
+}
+
 /** A volatility gauge: a rise is not "good", so it is shown without up or down colouring. */
 export const isGauge = (id: string) => id === 'NSE:INDIAVIX'
 

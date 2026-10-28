@@ -191,6 +191,7 @@ export function IndexStrip() {
   const levels = useApp(s => s.indexLevels)
   const source = useApp(s => s.source)
   const status = useApp(s => s.marketStatus)
+  const openIndex = useApp(s => s.openIndex)
   // Demo data must never sit beside real index levels.
   if (source === 'demo' || status !== 'ready') return null
   if (levels.length === 0) {
@@ -202,7 +203,7 @@ export function IndexStrip() {
         const chg = l.prevClose ? (l.ltp / l.prevClose - 1) * 100 : null
         const gauge = isGauge(l.id)
         return (
-          <div key={l.id} className="card min-w-[8.25rem] shrink-0 px-3 py-2.5 md:min-w-0" title={`${l.name} (${exchangeOf(l.id)}) · ${l.live ? 'live tick' : 'last daily close'}`}>
+          <button key={l.id} onClick={() => openIndex(l.id)} className="card min-w-[8.25rem] shrink-0 cursor-pointer px-3 py-2.5 text-left transition hover:!border-accent/50 md:min-w-0" title={`${l.name} (${exchangeOf(l.id)}) · ${l.live ? 'live tick' : 'last daily close'}. Open chart`}>
             <div className="flex items-center justify-between gap-2 text-[11px] text-mute">
               <span className="flex min-w-0 items-center gap-1.5"><span className="truncate">{l.name}</span></span>
               <span className={`flex shrink-0 items-center gap-1 ${l.live ? 'text-up' : ''}`}><span className={`h-1.5 w-1.5 rounded-full ${l.live ? 'animate-pulse bg-up' : 'bg-mute'}`} />{l.live ? 'LIVE' : 'EOD'}</span>
@@ -212,7 +213,7 @@ export function IndexStrip() {
               <span className={`num text-xs font-medium ${chg === null || gauge ? 'text-mute' : tone(chg)}`}>{chg === null ? '—' : pct(chg)}</span>
               <ExchangeTag id={l.id} />
             </div>
-          </div>
+          </button>
         )
       })}
     </div>
