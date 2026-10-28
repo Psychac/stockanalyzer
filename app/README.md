@@ -77,6 +77,12 @@ work with any data source, including none.
 - **Index charts:** click any index tile (or the big Nifty 50 card) on the dashboard, or pick one under Indices in the chart picker.
   An index chart shows candles, moving averages, range, returns and trend, and deliberately no trade plan, because an index cannot be
   bought directly. It is end-of-day: a live Breeze tick updates the displayed level but not the candles.
+- **Timeframes:** every chart (stocks and indices) has 1m, 5m, 15m, 30m, 1h, 1D, 1W and 1M. Weekly and monthly are rolled up from
+  daily bars, so they work on every source. Intraday candles come from Upstox's public history endpoint (NSE and BSE stocks by ISIN,
+  and indices), fetched only for the chart you are viewing and refreshed every 45 s while the market is open. Upstox documents that
+  endpoint as needing a login but does not enforce it today, so it could be closed; the chart says where the data is from and falls
+  back gracefully. Intraday is not offered on demo data (synthetic prices must not sit beside real candles). The trade plan is built
+  from daily bars, so its levels are drawn on the 1D chart only. Scanners remain daily.
 - Backend setup (Blob store, `CRON_SECRET`, first backfill) is in [`../docs/backend-design.md`](../docs/backend-design.md).
 - `npm run dev` proxies `/api/data` to the deployed site; set `MARKET_DATA_ORIGIN` to use another deployment.
 

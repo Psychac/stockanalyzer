@@ -1,4 +1,5 @@
-export type Timeframe = '1D' | '15m'
+/** Chart timeframes. Scanners and the tracked-stock providers still work on daily bars (`1D`) only. */
+export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '1D' | '1W' | '1M'
 
 export type Exchange = 'NSE' | 'BSE'
 

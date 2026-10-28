@@ -9,6 +9,7 @@ import {
 } from './db/db'
 import { demoProvider } from './providers/demo'
 import { BENCHMARK, UNIVERSE } from './providers/universe'
+import { UNIVERSE_ISIN } from './providers/isin'
 import { FyersClient } from './providers/fyers/client'
 import { FyersProvider } from './providers/fyers/provider'
 import { applyQuote, finalizeCandles } from './providers/candles'
@@ -92,6 +93,8 @@ interface State {
   openStock: (row: MasterRow | { symbol: string }) => Promise<void>
   /** Chart of a market index (Nifty 50, Sensex, ...). End-of-day. */
   openIndex: (id: string) => void
+  /** ISIN for a stock, if known: needed to request intraday candles. */
+  isinFor: (id: string) => string | undefined
   loadMarket: () => Promise<void>
   loadMarketData: (exchanges: Exchange[]) => Promise<boolean>
   /** `listedOnce` skips a BSE listing when the same company (by ISIN) is also on NSE, so "Both" does not count it twice. */
@@ -486,6 +489,12 @@ export const useApp = create<State>((set, get) => {
       }
       set({ chartSymbol: id })
       get().go('charts')
+    },
+
+    isinFor(id) {
+      const tracked = id.startsWith('NSE:') ? UNIVERSE_ISIN[id.slice(4)] : undefined
+      if (tracked) return tracked
+      return marketHist[id.slice(0, 3) as Exchange]?.stocks[id]?.isin || get().searchIndex?.find(i => i[0] === id)?.[3] || undefined
     },
 
     openIndex(id) {

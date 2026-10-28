@@ -5,6 +5,9 @@ import { DataBadge, Disclaimer, ExchangeTag, NoData, PageHeader, ScoreRing, Skel
 import { PriceChart, type ChartOptions } from '../components/PriceChart'
 import { dateOnly, pct, price, rupees, timeOnly, tone } from '../format'
 import { indexStats } from '../../indices'
+import { TF_NAME, TimeframeBar, useChartTimeframe, useTimeframeData, type TimeframeData } from '../components/timeframe'
+import { isIntraday } from '../../domain/timeframes'
+import type { Timeframe } from '../../domain/types'
 
 const DEFAULT_OPTS: ChartOptions = { sma20: false, sma50: true, sma200: true, ema20: false, volume: true, rsi: false, macd: false }
 const TOGGLES: { key: keyof ChartOptions; label: string }[] = [
@@ -33,6 +36,8 @@ export function Charts() {
   const set = id ? sets.get(id) ?? extras.get(id) : undefined
   const strategy = STRATEGIES.find(s => s.id === strategyId)!
   const isIndex = set?.instrument.kind === 'index'
+  const [tf, setTf] = useChartTimeframe()
+  const td = useTimeframeData(set, tf)
   const plan = useMemo(() => (set && !isIndex ? strategy.evaluate(set, { rr: [settings.rr1, settings.rr2] }) : null), [set, isIndex, strategy, settings.rr1, settings.rr2])
   const sizing = useMemo(() => (plan && plan.riskPerShare > 0 ? sizePosition({ capital: settings.capital, riskPct: settings.riskPct, entry: plan.entry, stop: plan.stop, maxPositionPct: settings.maxPositionPct, roundTripCostPct: settings.roundTripCostPct }) : null), [plan, settings])
 
@@ -85,8 +90,9 @@ export function Charts() {
             ))}
             <button onClick={() => setShowPlan(!showPlan)} className={`chip ml-auto cursor-pointer ${showPlan ? 'border-up/50 bg-up/10 text-up' : ''}`}>Trade plan overlay</button>
           </div>
-          <PriceChart set={set} options={opts} plan={showPlan && hasLevels ? plan : null} height={height} />
-          <div className="mt-1 flex justify-between px-1 text-[10px] text-mute"><span>Daily candles · {c.length} bars</span><span>Chart by TradingView</span></div>
+          <div className="mb-2"><TimeframeBar tf={tf} onChange={setTf} /></div>
+          <ChartArea td={td} tf={tf} options={opts} plan={showPlan && hasLevels && tf === '1D' ? plan : null} height={height} />
+          {tf !== '1D' && <p className="mt-1 px-1 text-[10px] text-mute">The trade plan is built from daily candles, so its levels are drawn on the 1D chart only.</p>}
         </section>
 
         <aside className="space-y-4">
@@ -189,6 +195,8 @@ function IndexView({ set, opts, setOpts }: { set: import('../../domain/types').C
   const chg = level?.prevClose ? (level.ltp / level.prevClose - 1) * 100 : stats?.changePct ?? null
   const extraPanes = Number(opts.rsi) + Number(opts.macd)
   const chartOpts = { ...opts, volume: false }
+  const [tf, setTf] = useChartTimeframe()
+  const td = useTimeframeData(set, tf)
   return (
     <>
       <PageHeader title="Charts" actions={<DataBadge set={set} />} />
@@ -208,8 +216,8 @@ function IndexView({ set, opts, setOpts }: { set: import('../../domain/types').C
               <button key={t.key} onClick={() => setOpts({ ...opts, [t.key]: !opts[t.key] })} className={`chip cursor-pointer transition ${opts[t.key] ? 'border-accent/60 bg-accent/10 text-accent' : 'hover:text-ink'}`}>{t.label}</button>
             ))}
           </div>
-          <PriceChart set={set} options={chartOpts} plan={null} height={420 + extraPanes * 130} />
-          <div className="mt-1 flex justify-between px-1 text-[10px] text-mute"><span>Daily candles · {c.length} bars · updates at each close</span><span>Chart by TradingView</span></div>
+          <div className="mb-2"><TimeframeBar tf={tf} onChange={setTf} /></div>
+          <ChartArea td={td} tf={tf} options={chartOpts} plan={null} height={420 + extraPanes * 130} />
         </section>
         {stats && (
           <aside className="space-y-4">
@@ -251,3 +259,25 @@ function IndexView({ set, opts, setOpts }: { set: import('../../domain/types').C
 const Stat = ({ k, v, cls = '' }: { k: string; v: string; cls?: string }) => (
   <div><dt className="label">{k}</dt><dd className={`mt-0.5 font-medium ${cls}`}>{v}</dd></div>
 )
+
+/** The chart for the chosen timeframe, or an honest message while it loads or when that timeframe is not available. */
+function ChartArea({ td, tf, options, plan, height }: { td: TimeframeData; tf: Timeframe; options: ChartOptions; plan: import('../../domain/trade').TradePlan | null; height: number }) {
+  if (td.error) {
+    return (
+      <div className="grid place-items-center rounded-xl border border-dashed border-line px-6 text-center text-sm text-mute" style={{ height }}>
+        <div className="max-w-sm"><p className="text-ink">{TF_NAME[tf]} candles are not available</p><p className="mt-1 text-xs">{td.error}</p></div>
+      </div>
+    )
+  }
+  if (!td.view) return <div style={{ height }}><Skeleton className="h-full" /></div>
+  const n = td.view.candles.length
+  return (
+    <>
+      <PriceChart set={td.view} options={options} plan={plan} height={height} />
+      <div className="mt-1 flex flex-wrap justify-between gap-x-3 px-1 text-[10px] text-mute">
+        <span>{TF_NAME[tf]} candles · {n} bars{isIntraday(tf) ? ' · Upstox public data, may be delayed; refreshes every 45 s while the market is open' : tf === '1D' ? '' : ' · built from daily candles'}</span>
+        <span>Chart by TradingView</span>
+      </div>
+    </>
+  )
+}

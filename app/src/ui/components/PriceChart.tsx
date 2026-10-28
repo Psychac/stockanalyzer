@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react'
 import {
   CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSeries, LineStyle, createChart,
-  type IChartApi, type IPriceLine, type ISeriesApi, type Time,
+  type IChartApi, type IPriceLine, type ISeriesApi, type Time, type UTCTimestamp,
 } from 'lightweight-charts'
 import type { CandleSet, Series } from '../../domain/types'
 import { istDate } from '../../domain/time'
+import { IST_SHIFT_S, isIntraday } from '../../domain/timeframes'
 import { makeContext, series, type EvalContext } from '../../domain/scanner'
 import type { TradePlan } from '../../domain/trade'
 
@@ -34,7 +35,11 @@ interface Built {
   lines: Line[]
 }
 
-const time = (set: CandleSet, i: number) => istDate(set.candles[i].t) as Time
+/** Daily and longer bars are placed by date. Intraday bars need real timestamps, shifted so the axis reads in Indian time. */
+const time = (set: CandleSet, i: number): Time =>
+  isIntraday(set.timeframe) ? ((Math.floor(set.candles[i].t / 1000) + IST_SHIFT_S) as UTCTimestamp) : (istDate(set.candles[i].t) as Time)
+/** Identifies what the chart is drawing; a change means a rebuild rather than a live update. */
+const keyOf = (set: CandleSet) => `${set.instrument.id}|${set.timeframe}`
 const lineData = (set: CandleSet, s: Series) => set.candles.flatMap((_, i) => (s[i] === null ? [] : [{ time: time(set, i), value: s[i] as number }]))
 const histColor = (v: number) => (v >= 0 ? 'rgba(45,212,138,0.7)' : 'rgba(255,92,122,0.7)')
 const volPoint = (set: CandleSet, i: number) => ({ time: time(set, i), value: set.candles[i].v, color: set.candles[i].c >= set.candles[i].o ? 'rgba(45,212,138,0.35)' : 'rgba(255,92,122,0.35)' })
@@ -56,12 +61,12 @@ export function PriceChart({ set, options, plan, height }: { set: CandleSet; opt
       grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderColor: C.line },
-      timeScale: { borderColor: C.line, timeVisible: false, rightOffset: 6 },
+      timeScale: { borderColor: C.line, timeVisible: isIntraday(data.timeframe), secondsVisible: false, rightOffset: 6 },
       localization: { locale: 'en-IN' },
     })
     const ctx = makeContext(data, null)
     const candles = chart.addSeries(CandlestickSeries, { upColor: C.up, downColor: C.down, borderUpColor: C.up, borderDownColor: C.down, wickUpColor: C.up, wickDownColor: C.down })
-    const b: Built = { chart, id: data.instrument.id, count: data.candles.length, candles, vol: null, hist: null, lines: [] }
+    const b: Built = { chart, id: keyOf(data), count: data.candles.length, candles, vol: null, hist: null, lines: [] }
 
     const overlay = (on: boolean, get: Line['get'], color: string, title: string) => {
       if (!on) return
@@ -104,12 +109,12 @@ export function PriceChart({ set, options, plan, height }: { set: CandleSet; opt
     chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 130), to: n + 6 })
     built.current = b
     return () => { built.current = null; chart.remove() }
-  }, [set.instrument.id, options])
+  }, [set.instrument.id, set.timeframe, options])
 
   // Live data: update only the latest bar (and a new bar when the day rolls over).
   useEffect(() => {
     const b = built.current
-    if (!b || b.id !== set.instrument.id) return
+    if (!b || b.id !== keyOf(set)) return
     const n = set.candles.length
     const last = set.candles[n - 1]
     const ctx = makeContext(set, null)
@@ -160,7 +165,7 @@ export function PriceChart({ set, options, plan, height }: { set: CandleSet; opt
       for (const l of lines) { try { b.candles.removePriceLine(l) } catch { /* removed meanwhile */ } }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planKey, set.instrument.id, options])
+  }, [planKey, set.instrument.id, set.timeframe, options])
 
   return <div ref={ref} style={{ height }} className="w-full" />
 }
