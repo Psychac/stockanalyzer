@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_SESSIONS, applyDay, candlesOf, emptyHistory, prune, type DayRow, type Exchange } from './history.js'
 import { nseDate, parseBse, parseNse, splitCsv } from './parse.js'
-import { INDICES, advance, bseUrl, nseUrl, type Deps } from './ingest.js'
+import { DATA_VERSION, INDICES, advance, bseUrl, nseUrl, type Deps } from './ingest.js'
 import { memoryStore } from './store.js'
 import { buildPulse } from './pulse.js'
 
@@ -432,5 +432,42 @@ describe('manifests from before revisions existed', () => {
     const rb = await advance({ store, ...world({ today: '2026-10-28' }) }, { rebuild: true, startDate: '2026-10-27' })
     expect(rb.wrote.some(f => f.includes('NaN'))).toBe(false)
     expect(Number.isInteger(store.manifest()!.rev)).toBe(true)
+  })
+})
+
+describe('automatic rebuild when the data version is outdated', () => {
+  it('rebuilds by itself once, then carries on normally, with no flag needed', async () => {
+    const store = memoryStore()
+    await advance({ store, ...world({ today: '2026-10-27' }) }, { startDate: '2026-10-26' })
+    const m = JSON.parse(JSON.stringify(store.manifest()))
+    expect(m.dataVersion).toBe(DATA_VERSION) // freshly published data is current
+    delete m.dataVersion // what a deployment from before versioning left behind
+    await store.putManifest(m)
+    const first = await advance({ store, ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-26' })
+    expect(first.rebuilt).toBe(true)
+    expect(first.applied).toEqual(['2026-10-26', '2026-10-27', '2026-10-28']) // started over, not just the new day
+    expect(store.manifest()!.dataVersion).toBe(DATA_VERSION)
+    const second = await advance({ store, ...world({ today: '2026-10-28' }) })
+    expect(second.rebuilt).toBeUndefined()
+    expect(second.applied).toEqual([])
+  })
+
+  it('a rebuild cut short by the time budget continues instead of starting over', async () => {
+    const store = memoryStore()
+    await advance({ store, ...world({ today: '2026-10-27' }) }, { startDate: '2026-10-26' })
+    const m = JSON.parse(JSON.stringify(store.manifest())); delete m.dataVersion
+    await store.putManifest(m)
+    const cut = await advance({ store, ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-19', maxDays: 3 })
+    expect(cut.rebuilt).toBe(true)
+    expect(cut.applied).toHaveLength(3)
+    const rest = await advance({ store, ...world({ today: '2026-10-28' }) })
+    expect(rest.rebuilt).toBeUndefined() // the version was stamped, so this is a plain continuation
+    expect(rest.applied[0]).toBe('2026-10-22')
+    expect(rest.stopped).toBeNull()
+  })
+
+  it('never rebuilds a brand-new, empty store', async () => {
+    const r = await advance({ store: memoryStore(), ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-27' })
+    expect(r.rebuilt).toBeUndefined()
   })
 })

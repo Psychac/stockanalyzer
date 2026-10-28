@@ -6,6 +6,8 @@ export interface FileRef { file: string; date: string; rev?: number }
 
 export interface Manifest {
   version: 1
+  /** Version of the rules that built the published data (see DATA_VERSION). A mismatch makes the next ingest rebuild. */
+  dataVersion?: number
   /** Last session folded into the history, or null before the first run. */
   latestDate: string | null
   /** One snapshot per exchange. All share `latestDate`. */

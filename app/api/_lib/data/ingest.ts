@@ -12,6 +12,13 @@ import { emptyManifest, type Manifest, type Store } from './store.js'
  * Write budget on Vercel Hobby (2,000 uploads a month): a few new days are written as small delta files; a long catch-up, or a
  * week of deltas, is folded into one new snapshot. So a normal month costs roughly 40 uploads.
  */
+/**
+ * Bump this whenever a change to the ingest rules makes already-published data wrong or incomplete (what is included, how it is
+ * adjusted, which fields exist). The next ingest then rebuilds the history from scratch by itself, so a deploy that changes the
+ * data fixes the data without anyone running a special command. Never bump it for changes that only affect new days.
+ */
+export const DATA_VERSION = 2
+
 export interface Fetched { status: number; text: string }
 export interface Deps {
   store: Store
@@ -39,6 +46,8 @@ export interface Result {
   skipped: string[]
   /** Why it stopped early, if it did. */
   stopped: string | null
+  /** True when this run threw the old data away and started over (asked for, or the data version was outdated). */
+  rebuilt?: boolean
   /** Set when metadata could not be refreshed; prices are unaffected. */
   metaError?: string
   latestDate: string | null
@@ -139,7 +148,10 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   const budget = opts.budgetMs ?? 200_000
   const today = istDay(t0)
   const previous = (await deps.store.getManifest()) ?? emptyManifest()
-  const m: Manifest = opts.rebuild ? { ...emptyManifest(), rev: previous.rev ?? 0, meta: previous.meta, urls: {} } : previous
+  // Rebuild when asked, or when the published data predates the current rules. A first-ever run has nothing to rebuild.
+  const outdated = !!previous.latestDate && previous.dataVersion !== DATA_VERSION
+  const rebuild = !!opts.rebuild || outdated
+  const m: Manifest = rebuild ? { ...emptyManifest(), rev: previous.rev ?? 0, meta: previous.meta, urls: {} } : previous
   const h = await load(deps.store, m)
   let meta: Meta | null = m.meta ? await deps.store.getJson<Meta>(m.meta.file) : null
   let metaFresh = false
@@ -148,7 +160,7 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   if (opts.refreshMeta || metaAgeDays > 7) {
     try { meta = await fetchMeta(deps, today); metaFresh = true } catch (e) { metaError.v = e instanceof Error ? e.message : String(e) }
   }
-  const res: Result = { applied: [], skipped: [], stopped: null, latestDate: m.latestDate, wrote: [] }
+  const res: Result = { applied: [], skipped: [], stopped: null, latestDate: m.latestDate, wrote: [], ...(rebuild ? { rebuilt: true } : {}) }
   if (metaError.v) res.metaError = metaError.v
   const newDays: { date: string; rows: DayRow[] }[] = []
 
@@ -181,7 +193,7 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   const urls = { ...m.urls }
   // Manifests written before revisions existed have no `rev`; treat that as 0 rather than producing NaN.
   const rev = (m.rev ?? 0) + 1
-  const next: Manifest = { ...m, latestDate: res.latestDate, updatedAt: new Date(deps.now()).toISOString(), urls }
+  const next: Manifest = { ...m, dataVersion: DATA_VERSION, latestDate: res.latestDate, updatedAt: new Date(deps.now()).toISOString(), urls }
   const stale: string[] = []
   const foldIntoSnapshot = metaFresh || !m.snapshots.NSE || newDays.length > 3 || new Set(m.deltas.map(x => x.date)).size + newDays.length > 7
   if (foldIntoSnapshot) {
@@ -208,7 +220,7 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     }
     for (const r of Object.values(m.snapshots)) if (r) stale.push(r.file)
     stale.push(...m.deltas.map(x => x.file))
-    if (opts.rebuild) {
+    if (rebuild) {
       // The old published set is replaced wholesale.
       for (const r of Object.values(previous.snapshots)) if (r) stale.push(r.file)
       stale.push(...previous.deltas.map(x => x.file))
@@ -235,7 +247,7 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     urls[pulseFile] = await deps.store.putJson(pulseFile, buildPulse(h))
     res.wrote.push(pulseFile)
     if (m.pulse && m.pulse.file !== pulseFile) stale.push(m.pulse.file)
-    if (opts.rebuild && previous.pulse && previous.pulse.file !== pulseFile) stale.push(previous.pulse.file)
+    if (rebuild && previous.pulse && previous.pulse.file !== pulseFile) stale.push(previous.pulse.file)
     next.pulse = { file: pulseFile, date: res.latestDate!, rev: next.rev }
   }
 
