@@ -101,17 +101,23 @@ function MarketDataCard() {
   return (
     <section className="card space-y-4 p-5 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><h2 className="font-semibold">Live price source</h2><p className="text-xs text-mute">Where the tracked 50 stocks and live prices come from. Your choice is remembered on this device. Market-wide end-of-day data is separate, below.</p></div>
+        <div><h2 className="font-semibold">Price source</h2><p className="text-xs text-mute">Where prices for your watchlist come from. End-of-day uses the shared market data and needs no account. FYERS and Breeze add live NSE prices for the stocks you star. Remembered on this device.</p></div>
         <div className="flex rounded-xl bg-bg/60 p-1 text-sm">
-          {([['demo', 'Demo data'], ['fyers', 'FYERS'], ['breeze', 'ICICI Breeze']] as const).map(([k, label]) => (
+          {([['market', 'End-of-day'], ['fyers', 'FYERS'], ['breeze', 'ICICI Breeze'], ['demo', 'Demo']] as const).map(([k, label]) => (
             <button key={k} disabled={loading} onClick={() => source !== k && void setSource(k)} className={`rounded-lg px-3 py-1.5 transition disabled:opacity-50 ${source === k ? 'bg-panel2 text-ink' : 'text-mute hover:text-ink'}`}>{label}</button>
           ))}
         </div>
       </div>
 
+      {source === 'market' && (
+        <div className="rounded-xl border border-accent/30 bg-accent/5 p-3 text-xs text-mute">
+          <span className="font-medium text-accent">End-of-day data, no broker needed.</span> Prices come from the daily NSE and BSE files published by your shared backend, so every listed stock is available and nothing is pre-selected. Prices update once a day after the close. Connect FYERS or Breeze above for live NSE prices on your watchlist.
+        </div>
+      )}
+
       {source === 'demo' && (
         <div className="rounded-xl border border-warn/30 bg-warn/5 p-3 text-xs text-mute">
-          <span className="font-medium text-warn">Synthetic data.</span> Scanners and charts run on generated prices so the app can be explored end to end. Switch to FYERS for real NSE data.
+          <span className="font-medium text-warn">Synthetic demo stocks.</span> Their prices are generated so the app can be explored with no setup. Real data: switch to End-of-day, FYERS or Breeze. Search always finds real stocks.
         </div>
       )}
 

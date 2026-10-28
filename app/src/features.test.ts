@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { sessionOpen } from './domain/time'
-import type { Candle } from './domain/types'
+import type { Candle, CandleSet } from './domain/types'
+import { pulseFromSets } from './market/pulse'
 import { INDEX_ORDER, indexLevel, indexStats, isGauge, sortLevels } from './indices'
-import { UNIVERSE } from './providers/universe'
+import { DEMO_UNIVERSE } from './providers/universe'
 import { BREEZE_CODES, BREEZE_INDICES, lookupCode, registerExtra } from './providers/breeze/codes'
 import { adoptRow, loadMaster, rankMatches } from './providers/breeze/master'
 import { BreezeStream, parseIndexTick, tokenFor } from './providers/breeze/stream'
@@ -42,7 +43,7 @@ describe('Breeze instrument master', () => {
     const master = await loadMaster()
     expect(master.length).toBeGreaterThan(2000)
     const bySymbol = new Map(master.map(r => [r.symbol, r]))
-    for (const i of UNIVERSE) {
+    for (const i of DEMO_UNIVERSE) {
       const row = bySymbol.get(i.symbol)
       expect(row, i.symbol).toBeDefined()
       expect({ code: row!.code, token: row!.token }, i.symbol).toEqual(BREEZE_CODES[i.symbol])
@@ -113,7 +114,7 @@ describe('index ticks', () => {
 
 describe('BreezeStream with indices and added stocks', () => {
   const session: BreezeSession = { appKey: 'K', sessionToken: 'x', userId: 'U', streamToken: 'T', obtainedAt: 0, expiresAt: Number.MAX_SAFE_INTEGER }
-  const reliance = UNIVERSE.find(i => i.symbol === 'RELIANCE')!
+  const reliance = DEMO_UNIVERSE.find(i => i.symbol === 'RELIANCE')!
 
   function harness() {
     const handlers: Record<string, (...a: unknown[]) => void> = {}
@@ -149,7 +150,7 @@ describe('BreezeStream with indices and added stocks', () => {
     stream.start()
     handlers.connect()
     emitted.length = 0
-    const tcs = UNIVERSE.find(i => i.symbol === 'TCS')!
+    const tcs = DEMO_UNIVERSE.find(i => i.symbol === 'TCS')!
     stream.add(tcs)
     stream.add(tcs)
     stream.add({ ...tcs, id: 'NSE:NOPE', symbol: 'NOPE' })
@@ -202,3 +203,18 @@ describe('index chart stats', () => {
   })
 })
 const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length
+
+describe('pulse from candle sets (demo mode)', () => {
+  const mkSet = (sym: string, closes: number[]): CandleSet => ({ instrument: { id: `NSE:${sym}`, exchange: 'NSE', symbol: sym, name: sym, sector: 'X', kind: 'equity' }, timeframe: '1D', candles: closes.map((c, i) => bar(`2025-02-${String(1 + i).padStart(2, '0')}`, c)), source: 'demo', asOf: 0 })
+
+  it('counts breadth, ranks movers best and worst first, and reports prices in paise', () => {
+    const p = pulseFromSets([mkSet('UP', [100, 110]), mkSet('BIG', [100, 120]), mkSet('DN', [100, 90]), mkSet('FLAT', [100, 100])], 2)!
+    expect(p).toMatchObject({ total: 4, adv: 2, dec: 1, unch: 1 })
+    expect(p.gainers.map(m => [m.sym, m.chg, m.c])).toEqual([['BIG', 20, 12000], ['UP', 10, 11000]])
+    expect(p.losers.map(m => [m.sym, m.chg])).toEqual([['DN', -10]])
+  })
+  it('returns null when there is nothing to summarise', () => {
+    expect(pulseFromSets([])).toBeNull()
+    expect(pulseFromSets([mkSet('ONE', [100])])).toBeNull()
+  })
+})

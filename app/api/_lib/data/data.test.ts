@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_SESSIONS, applyDay, candlesOf, emptyHistory, prune, type DayRow } from './history.js'
+import { MAX_SESSIONS, applyDay, candlesOf, emptyHistory, prune, type DayRow, type Exchange } from './history.js'
 import { nseDate, parseBse, parseNse, splitCsv } from './parse.js'
 import { INDICES, advance, bseUrl, nseUrl, type Deps } from './ingest.js'
 import { memoryStore } from './store.js'
+import { buildPulse } from './pulse.js'
 
 const NSE_CSV = (date: string, rows: string[]) => `SYMBOL, SERIES, DATE1, PREV_CLOSE, OPEN_PRICE, HIGH_PRICE, LOW_PRICE, LAST_PRICE, CLOSE_PRICE, AVG_PRICE, TTL_TRD_QNTY, TURNOVER_LACS, NO_OF_TRADES, DELIV_QTY, DELIV_PER\n${rows.map(r => r.replace('DATE', date)).join('\n')}`
 const BSE_HEAD = 'TradDt,BizDt,Sgmt,Src,FinInstrmTp,FinInstrmId,ISIN,TckrSymb,SctySrs,XpryDt,FininstrmActlXpryDt,StrkPric,OptnTp,FinInstrmNm,OpnPric,HghPric,LwPric,ClsPric,LastPric,PrvsClsgPric,UndrlygPric,SttlmPric,OpnIntrst,ChngInOpnIntrst,TtlTradgVol,TtlTrfVal,TtlNbOfTxsExctd,SsnId,NewBrdLotQty,Rmks,Rsvd1,Rsvd2,Rsvd3,Rsvd4'
@@ -192,15 +193,16 @@ describe('ingest', () => {
     const before = store.puts()
     const r = await advance({ store, ...world({ today: '2026-10-28' }) })
     expect(r.applied).toEqual(['2026-10-28'])
-    expect(r.wrote).toEqual(['delta-NSE-2026-10-28.json.gz', 'delta-BSE-2026-10-28.json.gz', 'indices-2026-10-28.json.gz', 'manifest.json'])
-    expect(store.puts() - before).toBe(4)
+    expect(r.wrote).toEqual(['delta-NSE-2026-10-28.json.gz', 'delta-BSE-2026-10-28.json.gz', 'pulse-2026-10-28-r1.json.gz', 'indices-2026-10-28.json.gz', 'manifest.json'])
+    expect(store.puts() - before).toBe(5)
+    expect(store.files.has('pulse-2026-10-27-r1.json.gz')).toBe(false) // yesterday's summary is replaced
     expect(store.manifest()!.deltas.map(d => d.date)).toEqual(['2026-10-28', '2026-10-28'])
     expect(store.files.has('indices-2026-10-27.json.gz')).toBe(false) // previous indices file cleaned up
 
     const again = await advance({ store, ...world({ today: '2026-10-28' }) })
     expect(again.applied).toEqual([])
     expect(again.stopped).toBeNull()
-    expect(store.puts() - before).toBe(4) // nothing written
+    expect(store.puts() - before).toBe(5) // nothing written
   })
 
   it('rebuilds the same history from snapshot plus deltas as from scratch', async () => {
@@ -356,5 +358,63 @@ describe('rebuild', () => {
     expect(nse!.dates).toHaveLength(3)
     for (const f of oldFiles.filter(f => !f.startsWith('meta-'))) expect(store.files.has(f), f).toBe(false) // metadata is still valid, so it is kept
     expect(now.meta).toEqual(old.meta)
+  })
+})
+
+describe('market pulse', () => {
+  const mk = (id: string, ex: Exchange, closes: number[], v = 1_000_000, name = id): DayRow[] => closes.map((c, i) => ({ id, ex, sym: id.split(':')[1], name, o: c, h: c, l: c, c, pc: i ? closes[i - 1] : c, v }))
+  const history = (series: Record<string, [Exchange, number[], number?]>) => {
+    const h = emptyHistory()
+    const len = Math.max(...Object.values(series).map(x => x[1].length))
+    for (let d = 0; d < len; d++) {
+      const rows: DayRow[] = []
+      for (const [id, [ex, closes, v]] of Object.entries(series)) if (closes[d] !== undefined) rows.push(mk(id, ex, closes, v)[d])
+      applyDay(h, new Date(Date.UTC(2026, 0, 1 + d)).toISOString().slice(0, 10), rows)
+    }
+    return h
+  }
+
+  it("counts advancing, declining and unchanged stocks per exchange, using each stock's own previous close", () => {
+    const p = buildPulse(history({ 'NSE:UP': ['NSE', [10000, 10500]], 'NSE:DN': ['NSE', [10000, 9500]], 'NSE:FL': ['NSE', [10000, 10000]], 'BSE:B1': ['BSE', [10000, 10200]] }))
+    expect(p.date).toBe('2026-01-02')
+    expect(p.NSE).toMatchObject({ total: 3, adv: 1, dec: 1, unch: 1 })
+    expect(p.BSE).toMatchObject({ total: 1, adv: 1, dec: 0 })
+  })
+
+  it('ranks movers by change, best first and worst first, and keeps illiquid jumps off the list', () => {
+    const p = buildPulse(history({
+      'NSE:A': ['NSE', [10000, 11000]], 'NSE:B': ['NSE', [10000, 10300]], 'NSE:C': ['NSE', [10000, 9000]], 'NSE:D': ['NSE', [10000, 9800]],
+      'NSE:THIN': ['NSE', [10000, 15000], 60_000], // +50%, but about Rs 90 lakh a day: below the Rs 5 crore movers bar
+    }), { top: 2 })
+    expect(p.NSE!.gainers.map(m => [m.sym, m.chg])).toEqual([['A', 10], ['B', 3]])
+    expect(p.NSE!.losers.map(m => [m.sym, m.chg])).toEqual([['C', -10], ['D', -2]])
+    expect(p.NSE!.total).toBe(5) // illiquid stocks still count toward breadth
+  })
+
+  it('skips stocks that did not trade on the latest session, and has no entry for an exchange with nothing', () => {
+    const h = emptyHistory()
+    applyDay(h, '2026-01-01', [mk('NSE:X', 'NSE', [10000])[0], mk('NSE:Y', 'NSE', [10000])[0]])
+    applyDay(h, '2026-01-02', [mk('NSE:X', 'NSE', [10000, 10100])[1]])
+    const p = buildPulse(h)
+    expect(p.NSE!.total).toBe(1)
+    expect(p.BSE).toBeUndefined()
+    expect(buildPulse(emptyHistory())).toEqual({ date: '' })
+  })
+
+  it('counts 52-week highs and lows only for stocks with enough history', () => {
+    const rising = Array.from({ length: 130 }, (_, i) => 10000 + i * 10)
+    const falling = Array.from({ length: 130 }, (_, i) => 20000 - i * 10)
+    const short = [10000, 11000, 12000]
+    const p = buildPulse(history({ 'NSE:R': ['NSE', rising], 'NSE:F': ['NSE', falling], 'NSE:S': ['NSE', short.concat(new Array(127).fill(12000))] }))
+    expect(p.NSE).toMatchObject({ highs: 2, lows: 1 }) // R and the flat S sit at their highs; F at its low
+  })
+
+  it('is published with each ingest and listed in the manifest', async () => {
+    const store = memoryStore()
+    await advance({ store, ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-27' })
+    const m = store.manifest()!
+    expect(m.pulse).toMatchObject({ date: '2026-10-28' })
+    const pulse = await store.getJson<{ date: string; NSE?: { total: number } }>(m.pulse!.file)
+    expect(pulse).toMatchObject({ date: '2026-10-28', NSE: { total: 1 } })
   })
 })

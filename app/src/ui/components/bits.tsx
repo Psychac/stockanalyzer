@@ -27,6 +27,7 @@ export function DataBadge({ set, compact }: { set?: CandleSet | null; compact?: 
   const open = isMarketOpen(now)
   const view = loading ? { text: 'LOADING', tone: 'accent', tip: 'Loading market data…' } : {
     demo: { text: 'DEMO DATA', tone: 'warn', tip: 'Synthetic data for development. Not real prices.' },
+    eod: { text: 'EOD', tone: 'accent', tip: 'End-of-day data from the shared backend (NSE and BSE files), not a live feed' },
     live: open && feed.updatedAt
       ? { text: 'LIVE', tone: 'up', tip: `Live prices${feed.updatedAt ? `, last update ${timeOnly(feed.updatedAt)}` : ''}` }
       : { text: 'EOD', tone: 'up', tip: open ? 'End-of-day data. Waiting for the first live price.' : 'End-of-day data. The market is closed.' },
@@ -42,7 +43,7 @@ export function DataBadge({ set, compact }: { set?: CandleSet | null; compact?: 
   return (
     <span className={`chip ${color}`} title={view.tip}>
       <span className={`h-1.5 w-1.5 rounded-full ${dot} ${feed.mode === 'live' && open && feed.updatedAt ? 'animate-pulse' : ''}`} />
-      {!loading && feed.mode !== 'demo' && feed.mode !== 'none' && <span className="text-mute">{source === 'breeze' ? 'BREEZE' : 'FYERS'} ·</span>}
+      {!loading && (source === 'breeze' || source === 'fyers') && feed.mode !== 'none' && <span className="text-mute">{source === 'breeze' ? 'BREEZE' : 'FYERS'} ·</span>}
       {view.text}
       {!compact && !loading && set && <span className="text-mute">· {set.candles[set.candles.length - 1]?.closed === false ? `${dateOnly(set.asOf)} session in progress` : `as of ${dateOnly(set.asOf)} close`}</span>}
     </span>
@@ -66,7 +67,7 @@ export function FeedBanner() {
       </div>
     )
   }
-  if (feed.mode === 'demo' || feed.mode === 'live' || (!feed.message && feed.mode !== 'none')) return null
+  if (feed.mode === 'demo' || feed.mode === 'eod' || feed.mode === 'live' || (!feed.message && feed.mode !== 'none')) return null
   // A full-page empty state already explains a failed load; the banner would only repeat it.
   if (status === 'loading' || status === 'error') return null
   const bad = feed.mode === 'stale' || feed.mode === 'none'

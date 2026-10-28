@@ -2,7 +2,7 @@ import { BREEZE_CODES, BREEZE_INDICES } from './codes'
 import { BreezeClient } from './client'
 import { BreezeStream } from './stream'
 import { helperAvailable, type BreezeSession } from './session'
-import { UNIVERSE } from '../universe'
+import { loadMaster } from './master'
 import { istDate } from '../../domain/time'
 import { ProviderError } from '../errors'
 
@@ -30,8 +30,8 @@ export async function runBreezeDiagnostics(session: BreezeSession | null, onUpda
   const left = session.expiresAt - Date.now()
   push({ label: 'Session', status: left > 0 ? 'ok' : 'fail', detail: left > 0 ? `Logged in as ${session.userId}. Assumed valid for about ${Math.round(left / 3.6e6)} h.` : 'The stored session has passed its assumed expiry. Log in again.' })
 
-  const mapped = UNIVERSE.filter(i => BREEZE_CODES[i.symbol]).length
-  push({ label: 'Symbol map', status: mapped === UNIVERSE.length ? 'ok' : 'fail', detail: `${mapped} of ${UNIVERSE.length} tracked stocks have a Breeze code.` })
+  const master = await loadMaster().catch(() => [])
+  push({ label: 'Symbol map', status: master.some(r => r.symbol === 'RELIANCE') ? 'ok' : 'fail', detail: master.length ? `${master.length.toLocaleString('en-IN')} NSE stocks have a Breeze code.` : 'The Breeze stock list could not be loaded.' })
 
   try {
     const now = Date.now()
@@ -49,7 +49,8 @@ export async function runBreezeDiagnostics(session: BreezeSession | null, onUpda
     return steps
   }
 
-  const stream = new BreezeStream(session, UNIVERSE.slice(0, 5))
+  const probe = (symbol: string) => ({ id: `NSE:${symbol}`, exchange: 'NSE' as const, symbol, name: symbol, sector: '', kind: 'equity' as const })
+  const stream = new BreezeStream(session, ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK'].map(probe))
   stream.watchIndices(BREEZE_INDICES)
   try {
     stream.start()

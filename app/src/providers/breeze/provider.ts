@@ -1,6 +1,5 @@
 import type { Candle, CandleSet, Instrument, Timeframe } from '../../domain/types'
 import { istDate } from '../../domain/time'
-import { UNIVERSE } from '../universe'
 import { ProviderError } from '../errors'
 import type { ConnectionStatus, MarketDataProvider, Quote } from '../types'
 import { mergeCandles } from '../candles'
@@ -13,6 +12,9 @@ import type { BreezeSession } from './session'
 const DAY = 86_400_000
 /** Keep each request to a year so it stays well inside any row cap. */
 const MAX_SPAN_DAYS = 365
+
+/** A well-known liquid stock used only to check that a session works. */
+const PROBE: Instrument = { id: 'NSE:RELIANCE', exchange: 'NSE', symbol: 'RELIANCE', name: 'Reliance Industries', sector: 'Energy', kind: 'equity' }
 
 export const codeFor = (i: Instrument): string | null => (i.kind === 'index' ? BREEZE_BENCHMARK.code : i.exchange === 'NSE' ? lookupCode(i.symbol)?.code ?? null : null)
 
@@ -31,7 +33,7 @@ export class BreezeProvider implements MarketDataProvider {
    */
   async connect() {
     try {
-      await this.fetchRange(UNIVERSE[0], this.now() - 10 * DAY, this.now())
+      await this.fetchRange(PROBE, this.now() - 10 * DAY, this.now())
       this.status = { state: 'connected', since: this.now() }
     } catch (e) {
       if (e instanceof ProviderError && e.kind === 'api') {
@@ -44,7 +46,6 @@ export class BreezeProvider implements MarketDataProvider {
 
   async disconnect() { this.stopStream(); this.status = { state: 'disconnected', note: 'Disconnected' } }
   getConnectionStatus() { return this.status }
-  async getInstruments() { return UNIVERSE.filter(i => codeFor(i)) }
 
   private async fetchRange(instrument: Instrument, fromMs: number, toMs: number): Promise<Candle[]> {
     const code = codeFor(instrument)

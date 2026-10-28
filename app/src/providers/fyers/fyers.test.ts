@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { isDailyBarClosed, isMarketOpen, istDate, lastSessionClose, nextTokenExpiry, sessionOpen } from '../../domain/time'
 import type { Candle, CandleSet, Instrument } from '../../domain/types'
-import { BENCHMARK, UNIVERSE } from '../universe'
+import { BENCHMARK, DEMO_UNIVERSE } from '../universe'
 import type { MarketDataProvider, Quote } from '../types'
 import { exchangeAuthCode, loginUrl, sha256Hex } from './auth'
 import { applyQuote, finalizeCandles, mergeCandles, parseDailyCandles } from './candles'
@@ -163,14 +163,14 @@ describe('FyersProvider', () => {
   }
 
   it('maps instruments to FYERS symbols', () => {
-    expect(toSymbol(UNIVERSE.find(i => i.symbol === 'M&M')!)).toBe('NSE:M&M-EQ')
+    expect(toSymbol(DEMO_UNIVERSE.find(i => i.symbol === 'M&M')!)).toBe('NSE:M&M-EQ')
     expect(toSymbol(BENCHMARK)).toBe('NSE:NIFTY50-INDEX')
   })
 
   it('splits a long history gap into windows the endpoint accepts', async () => {
     const { client, get } = fakeClient(() => ({ s: 'ok', candles: [[epochS('2026-10-23T00:00'), 10, 12, 9, 11, 5]] }))
     const p = new FyersProvider(client, () => now)
-    await p.getCandlesSince(UNIVERSE[0], '1D', now - 500 * 86_400_000)
+    await p.getCandlesSince(DEMO_UNIVERSE[0], '1D', now - 500 * 86_400_000)
     expect(get).toHaveBeenCalledTimes(2)
     for (const [, params] of get.mock.calls as unknown as [string, Record<string, string>][]) {
       const span = (Date.parse(params.range_to) - Date.parse(params.range_from)) / 86_400_000
@@ -181,13 +181,13 @@ describe('FyersProvider', () => {
 
   it('a year of bars needs exactly one history call', async () => {
     const { client, get } = fakeClient(() => ({ s: 'ok', candles: [] }))
-    await new FyersProvider(client, () => now).getHistoricalCandles(UNIVERSE[0], '1D', 250)
+    await new FyersProvider(client, () => now).getHistoricalCandles(DEMO_UNIVERSE[0], '1D', 250)
     expect(get).toHaveBeenCalledTimes(1)
   })
 
   it('rejects non-daily intervals instead of returning wrong data', async () => {
     const { client } = fakeClient(() => ({}))
-    await expect(new FyersProvider(client, () => now).getCandlesSince(UNIVERSE[0], '15m', now)).rejects.toBeInstanceOf(FyersError)
+    await expect(new FyersProvider(client, () => now).getCandlesSince(DEMO_UNIVERSE[0], '15m', now)).rejects.toBeInstanceOf(FyersError)
   })
 
   it('batches quotes by 50 and skips symbols FYERS flagged as errors', async () => {
@@ -197,16 +197,16 @@ describe('FyersProvider', () => {
         ? { n, s: 'error', v: {} }
         : { n, s: 'ok', v: { lp: 100 + i, prev_close_price: 99, open_price: 98, high_price: 102, low_price: 97, volume: 12345, tt: String(epochS('2026-10-27T10:59')) } })),
     }))
-    const quotes = await new FyersProvider(client, () => now).getQuotes([...UNIVERSE, BENCHMARK])
+    const quotes = await new FyersProvider(client, () => now).getQuotes([...DEMO_UNIVERSE, BENCHMARK])
     expect(get).toHaveBeenCalledTimes(2) // 51 symbols → 50 + 1
-    expect(quotes.find(q => q.instrumentId === UNIVERSE[1].id)).toBeUndefined()
-    expect(quotes[0]).toMatchObject({ instrumentId: UNIVERSE[0].id, ltp: 100, prevClose: 99, open: 98, high: 102, low: 97, volume: 12345, at: ist('2026-10-27T10:59') })
+    expect(quotes.find(q => q.instrumentId === DEMO_UNIVERSE[1].id)).toBeUndefined()
+    expect(quotes[0]).toMatchObject({ instrumentId: DEMO_UNIVERSE[0].id, ltp: 100, prevClose: 99, open: 98, high: 102, low: 97, volume: 12345, at: ist('2026-10-27T10:59') })
   })
 })
 
 describe('cache-first loader', () => {
   const now = ist('2026-10-27T11:00') // Tuesday; latest finalised session is Monday 15:35
-  const insts: Instrument[] = UNIVERSE.slice(0, 3)
+  const insts: Instrument[] = DEMO_UNIVERSE.slice(0, 3)
   const dates = ['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-26']
   const history = (): Candle[] => dates.map((d, i) => bar(d, 100 + i))
 

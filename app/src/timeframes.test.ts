@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { aggregate, isIntraday, weekStart } from './domain/timeframes'
 import { istDate, sessionOpen } from './domain/time'
 import type { Candle } from './domain/types'
-import { UNIVERSE } from './providers/universe'
-import { UNIVERSE_ISIN } from './providers/isin'
 import { IntradayError, fetchIntraday, historyUrl, mergeBars, parseUpstoxCandles, todayUrl, upstoxKey } from './market/intraday'
 
 const ist = (s: string) => Date.parse(`${s}:00+05:30`)
@@ -139,12 +137,5 @@ describe('intraday candles', () => {
     await expect(fetchIntraday('K', '5m', now, async () => ({ status: 503, json: null }))).rejects.toThrow(/HTTP 503/)
     await expect(fetchIntraday('K', '5m', now, async () => { throw new TypeError('offline') })).rejects.toThrow(/Could not reach/)
     await expect(fetchIntraday('K', '5m', now, async () => ({ status: 200, json: { data: { candles: [] } } }))).rejects.toBeInstanceOf(IntradayError)
-  })
-})
-
-describe('tracked-stock ISINs', () => {
-  it('covers every tracked stock with a well-formed ISIN', () => {
-    for (const i of UNIVERSE) expect(UNIVERSE_ISIN[i.symbol], i.symbol).toMatch(/^INE[0-9A-Z]{9}$/)
-    expect(UNIVERSE_ISIN.RELIANCE).toBe('INE002A01018')
   })
 })

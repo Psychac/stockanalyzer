@@ -12,8 +12,15 @@ npm run preview   # serve dist/ to test install and offline
 
 ## Data sources
 
-**Demo (default).** `src/providers/demo.ts` generates deterministic synthetic daily candles for the 50-stock universe.
-These are not real prices. The UI shows a `DEMO DATA` badge and `isLive` is hard-coded `false`.
+There is no built-in list of stocks. What the app shows is driven by three things: the **market-wide end-of-day data** (every liquid
+NSE and BSE stock, from this project's backend), your **watchlist** (the stocks you star), and **search**. A data source then decides
+where the watchlist's prices come from.
+
+**End-of-day (default).** The shared NSE and BSE files. No broker and no account needed; prices update once a day after the close.
+The whole-market dashboard panels (breadth, 52-week highs and lows, top movers) come from a small daily summary the backend publishes.
+
+**Demo.** `src/providers/demo.ts` generates synthetic daily candles for 50 made-up-price stocks, the only built-in stock list, so the
+app can be explored with no setup. The UI shows a `DEMO DATA` badge and `isLive` is hard-coded `false`. Intraday is refused in demo mode.
 
 **FYERS (live NSE).** Settings → Market data → FYERS. Works as a pure PWA with no server: the browser talks to FYERS directly.
 
@@ -46,10 +53,11 @@ the app, copy the value after `apisession=` from the address bar into "Or paste 
 
 ### Search, indices and live updates (Breeze)
 
-- **Search** (top of every page) covers every NSE stock when Breeze is connected. Stocks outside the tracked 50 are fetched on
-  demand (one history call) and added to the live feed while you view them. They are never fed to the scanners. The stock list
-  is a build-time snapshot of ICICI's instrument master (`src/providers/breeze/master.json`), because that file sends no CORS
-  header. Without Breeze, search covers the tracked 50 only.
+- With Breeze connected, search also lists NSE stocks that the end-of-day list leaves out. Those are fetched on demand (one history
+  call) and added to the live feed while you view them, and are never fed to scanners. Breeze's stock list is a build-time snapshot of
+  ICICI's instrument master (`src/providers/breeze/master.json`), because that file sends no CORS header.
+- **Your watchlist is what gets live prices.** Starring an NSE stock while FYERS or Breeze is connected fetches just that stock's
+  history and joins it to the live feed; un-starring drops it. BSE stocks have no live source and stay end-of-day.
 - **Index strip** on the dashboard shows Nifty 50, Bank Nifty, Nifty IT, Fin Services, Midcap 50 and India VIX: last daily close
   (`EOD`) until live ticks arrive, then `LIVE`. The **Sensex is not available**: it is a BSE index and Breeze does not serve BSE.
 - **Live charts** update only the latest candle, so the chart is built once per stock and keeps its zoom.
@@ -58,14 +66,14 @@ the app, copy the value after `apisession=` from the address bar into "Or paste 
 
 ### Market-wide scans (NSE and BSE)
 
-Discover has a **Stock universe** picker: Tracked 50 (your live source), All NSE, All BSE, or Both. The market-wide choices read
+Discover has a **Stock universe** picker: All NSE (the default), All BSE, Both, or My watchlist. The market-wide choices read
 end-of-day data published by this project's own backend (`api/data/*`, a daily Vercel cron that stores files in Vercel Blob), so they
-work with any data source, including none.
+work with any data source, including none. A watchlist scan keeps non-matches so you can see which rule failed.
 
 - First use downloads one file per exchange (about 6 MB each, gzipped) and keeps it in IndexedDB. After that only each day's small
   update is fetched, and a second scan downloads nothing. Measured on the real data: 2,441 NSE stocks scanned in about 3 s.
-- Only liquid stocks are included (about 2,400 per exchange), and large scans keep just the matches. Stocks outside the tracked 50
-  have end-of-day prices only and no sector.
+- Only liquid stocks are included (about 2,400 per exchange), and large scans keep just the matches. Stocks scanned this way
+  have end-of-day prices only, and an industry only where the free Nifty list knows it.
 - The index strip (Nifty 50, Bank Nifty, ..., **Sensex**, BSE 500, Bankex) comes from the same backend. It is hidden on demo data.
 - **Search** covers every liquid NSE and BSE stock from a small list (tens of KB), without downloading prices. Opening a stock
   loads that exchange's data once. BSE listings show as BSE, and a company on both exchanges appears as two entries.

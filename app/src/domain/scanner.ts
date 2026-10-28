@@ -352,7 +352,7 @@ export interface ScanRun {
   /** How many stocks were looked at. */
   universeSize: number
   source: CandleSet['source']
-  /** Which stock universe this ran on, e.g. "Tracked 50" or "All NSE". */
+  /** Which stock universe this ran on, e.g. "My watchlist" or "All NSE". */
   universe?: string
   /** Large scans keep only the matches, so the saved run stays small. */
   matchesOnly?: boolean
@@ -415,6 +415,8 @@ export interface LazyScan {
   onProgress?: (done: number, total: number) => void
   /** Check between chunks; return true to stop early. */
   cancelled?: () => boolean
+  /** Keep non-matches too, so "why didn't it match" can be answered. For small universes only. */
+  keepAll?: boolean
 }
 
 /** Same result as `runScanner`, but yields to the browser between chunks and keeps only matches (a big scan's non-matches are noise). */
@@ -428,7 +430,7 @@ export async function runScannerLazy(config: ScannerConfig, o: LazyScan, chunk =
       if (!set) continue
       const r = scanStock(config, set, o.benchmarkFor(set))
       looked++
-      if (r?.matched) results.push(r)
+      if (r && (r.matched || o.keepAll)) results.push(r)
     }
     o.onProgress?.(Math.min(i + chunk, o.ids.length), o.ids.length)
     await new Promise<void>(r => setTimeout(r, 0))
@@ -436,6 +438,6 @@ export async function runScannerLazy(config: ScannerConfig, o: LazyScan, chunk =
   results.sort(byRank)
   return {
     scannerId: config.id, scannerName: config.name, scannerVersion: config.version, ranAt: Date.now(),
-    universeSize: looked, source: o.source, universe: o.label, matchesOnly: true, results,
+    universeSize: looked, source: o.source, universe: o.label, matchesOnly: !o.keepAll, results,
   }
 }

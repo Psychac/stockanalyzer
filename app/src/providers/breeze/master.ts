@@ -21,7 +21,7 @@ export const instrumentFromRow = (r: MasterRow): Instrument => ({
   id: `NSE:${r.symbol}`, exchange: 'NSE', symbol: r.symbol, name: r.name, sector: 'Other', kind: 'equity',
 })
 
-/** Make a stock outside the tracked universe usable by the Breeze provider and stream. */
+/** Make any NSE stock from the master usable by the Breeze provider and stream. */
 export function adoptRow(r: MasterRow): Instrument {
   registerExtra(r.symbol, { code: r.code, token: r.token })
   return instrumentFromRow(r)

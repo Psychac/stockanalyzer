@@ -1,6 +1,6 @@
 import type { Candle, CandleSet, Instrument, Timeframe } from '../../domain/types'
 import { istDate } from '../../domain/time'
-import { BENCHMARK, UNIVERSE } from '../universe'
+import { BENCHMARK } from '../universe'
 import type { ConnectionStatus, MarketDataProvider, Quote } from '../types'
 import { FyersError, type FyersClient } from './client'
 import { mergeCandles, parseDailyCandles } from './candles'
@@ -47,7 +47,6 @@ export class FyersProvider implements MarketDataProvider {
 
   async disconnect() { this.status = { state: 'disconnected', note: 'Disconnected' } }
   getConnectionStatus() { return this.status }
-  async getInstruments() { return UNIVERSE }
 
   async getCandlesSince(instrument: Instrument, interval: Timeframe, sinceMs: number): Promise<Candle[]> {
     if (interval !== '1D') throw new FyersError('Only daily candles are supported so far.', 'api')

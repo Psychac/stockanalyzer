@@ -59,7 +59,7 @@ export const BREEZE_CODES: Record<string, { code: string; token: string }> = {
 
 export const BREEZE_BENCHMARK = { code: 'NIFBEE', token: '10576' }
 
-/** Stocks outside the tracked universe that the user opened through search. Filled at runtime from the master. */
+/** Stocks beyond the built-in map (watchlist or searched), registered at runtime from the master. */
 const EXTRA = new Map<string, { code: string; token: string }>()
 export const registerExtra = (symbol: string, v: { code: string; token: string }) => { EXTRA.set(symbol, v) }
 export const lookupCode = (symbol: string) => BREEZE_CODES[symbol] ?? EXTRA.get(symbol)

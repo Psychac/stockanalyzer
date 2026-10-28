@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { istDate, sessionOpen } from '../../domain/time'
 import type { Instrument } from '../../domain/types'
-import { BENCHMARK, UNIVERSE } from '../universe'
+import { BENCHMARK, DEMO_UNIVERSE } from '../universe'
 import { ProviderError } from '../errors'
 import { RateLimiter } from '../rateLimiter'
 import { BreezeClient, type BreezeRow } from './client'
@@ -108,10 +108,10 @@ describe('Breeze candle parsing', () => {
 
 describe('Breeze symbol map', () => {
   it('covers every tracked stock with a code and token', () => {
-    for (const i of UNIVERSE) expect(BREEZE_CODES[i.symbol], i.symbol).toBeDefined()
-    expect(codeFor(UNIVERSE.find(i => i.symbol === 'RELIANCE')!)).toBe('RELIND') // Breeze's own code, not the NSE symbol
+    for (const i of DEMO_UNIVERSE) expect(BREEZE_CODES[i.symbol], i.symbol).toBeDefined()
+    expect(codeFor(DEMO_UNIVERSE.find(i => i.symbol === 'RELIANCE')!)).toBe('RELIND') // Breeze's own code, not the NSE symbol
     expect(codeFor(BENCHMARK)).toBe(BREEZE_BENCHMARK.code)
-    expect(streamToken(tokenFor(UNIVERSE.find(i => i.symbol === 'RELIANCE')!)!)).toBe('4.1!2885')
+    expect(streamToken(tokenFor(DEMO_UNIVERSE.find(i => i.symbol === 'RELIANCE')!)!)).toBe('4.1!2885')
   })
 })
 
@@ -124,7 +124,7 @@ describe('BreezeProvider', () => {
 
   it('asks for one daily range per year and formats the request for Breeze', async () => {
     const { client, spy } = fakeClient(async () => [row('2026-10-23 07:00:00', 10)])
-    await new BreezeProvider(client, session, () => now).getCandlesSince(UNIVERSE[0], '1D', now - 500 * 86_400_000)
+    await new BreezeProvider(client, session, () => now).getCandlesSince(DEMO_UNIVERSE[0], '1D', now - 500 * 86_400_000)
     expect(spy).toHaveBeenCalledTimes(2)
     expect(spy.mock.calls[0][0]).toMatchObject({ interval: '1day', stock_code: 'RELIND', exch_code: 'NSE', product_type: 'cash' })
     expect(spy.mock.calls[0][0].from_date).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/)
@@ -133,7 +133,7 @@ describe('BreezeProvider', () => {
 
   it('a 250-bar load is a single call', async () => {
     const { client, spy } = fakeClient(async () => [])
-    await new BreezeProvider(client, session, () => now).getHistoricalCandles(UNIVERSE[0], '1D', 250)
+    await new BreezeProvider(client, session, () => now).getHistoricalCandles(DEMO_UNIVERSE[0], '1D', 250)
     expect(spy).toHaveBeenCalledTimes(1)
   })
 
@@ -152,14 +152,14 @@ describe('BreezeProvider', () => {
   it('rejects intraday and unmapped symbols instead of guessing', async () => {
     const { client } = fakeClient(async () => [])
     const p = new BreezeProvider(client, session, () => now)
-    await expect(p.getCandlesSince(UNIVERSE[0], '15m', now)).rejects.toBeInstanceOf(ProviderError)
+    await expect(p.getCandlesSince(DEMO_UNIVERSE[0], '15m', now)).rejects.toBeInstanceOf(ProviderError)
     const stranger: Instrument = { id: 'NSE:ZZZ', exchange: 'NSE', symbol: 'ZZZ', name: 'z', sector: 'x', kind: 'equity' }
     await expect(p.getCandlesSince(stranger, '1D', now)).rejects.toMatchObject({ message: 'No Breeze code for ZZZ.' })
   })
 })
 
 describe('Breeze live ticks', () => {
-  const reliance = UNIVERSE.find(i => i.symbol === 'RELIANCE')!
+  const reliance = DEMO_UNIVERSE.find(i => i.symbol === 'RELIANCE')!
   const byToken = new Map([[BREEZE_CODES.RELIANCE.token, reliance]])
   // [0]=token [1]=open [2]=last [3]=high [4]=low [5]=change ... [10]=ltq [12]=ttq [19]=ltt [20]=prev close
   const tick = (over: Record<number, unknown> = {}) => {

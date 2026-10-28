@@ -1,6 +1,7 @@
 import { gunzipSync } from 'node:zlib'
 import { admissible, applyDay, emptyHistory, mergeHistories, prune, sliceOf, type DayRow, type History } from './history.js'
 import { parseBse, parseNse, type Parsed } from './parse.js'
+import { buildPulse } from './pulse.js'
 import { buildSearchIndex, enrichHistory, enrichRow, INDUSTRY_LISTS, parseIndustryCsv, parseUpstoxNse, UPSTOX_NSE_MASTER, type Meta } from './meta.js'
 import { emptyManifest, type Manifest, type Store } from './store.js'
 
@@ -226,6 +227,15 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
         next.deltas.push({ file, date: day.date, ex })
       }
     }
+  }
+
+  if (newDays.length || metaFresh) {
+    const pulseFile = `pulse-${res.latestDate}-r${next.rev ?? rev}.json.gz`
+    urls[pulseFile] = await deps.store.putJson(pulseFile, buildPulse(h))
+    res.wrote.push(pulseFile)
+    if (m.pulse && m.pulse.file !== pulseFile) stale.push(m.pulse.file)
+    if (opts.rebuild && previous.pulse && previous.pulse.file !== pulseFile) stale.push(previous.pulse.file)
+    next.pulse = { file: pulseFile, date: res.latestDate!, rev: next.rev }
   }
 
   const ix = newDays.length ? await fetchIndices(deps, res.latestDate!) : { date: res.latestDate!, items: [] }

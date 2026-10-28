@@ -16,13 +16,15 @@ export interface Manifest {
   /** Company metadata (ISIN, names, industries) and the search list, both rebuilt when a snapshot is written. */
   meta: FileRef | null
   search: FileRef | null
+  /** Whole-market summary (breadth, highs and lows, top movers) for the latest session. */
+  pulse: FileRef | null
   rev: number
   updatedAt: string
   /** Public URLs by file name, so clients need no knowledge of the storage host. */
   urls: Record<string, string>
 }
 
-export const emptyManifest = (): Manifest => ({ version: 1, latestDate: null, snapshots: {}, deltas: [], indices: null, meta: null, search: null, rev: 0, updatedAt: new Date(0).toISOString(), urls: {} })
+export const emptyManifest = (): Manifest => ({ version: 1, latestDate: null, snapshots: {}, deltas: [], indices: null, meta: null, search: null, pulse: null, rev: 0, updatedAt: new Date(0).toISOString(), urls: {} })
 
 /** Where data files live. Blob in production, memory in tests. Everything is stored gzipped except the manifest. */
 export interface Store {

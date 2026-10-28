@@ -9,10 +9,14 @@ export interface Manifest {
   deltas: { file: string; date: string; ex: Exchange }[]
   indices: { file: string; date: string } | null
   search?: { file: string; date: string; rev?: number } | null
+  pulse?: { file: string; date: string; rev?: number } | null
   rev?: number
   urls: Record<string, string>
   updatedAt: string
 }
+
+import type { Pulse } from '../../api/_lib/data/pulse'
+export type { Pulse, ExchangePulse, PulseMover } from '../../api/_lib/data/pulse'
 
 export interface IndexFile { date: string; items: { id: string; name: string; bars: [string, number, number, number, number][] }[] }
 
@@ -100,6 +104,12 @@ export async function fetchIndexBars(m: Manifest, net: Net = realNet): Promise<{
     id: i.id, name: i.name,
     candles: i.bars.map(([d, o, h, l, c]) => ({ t: sessionOpen(d), o, h, l, c, v: 0, closed: true })),
   }))
+}
+
+/** Whole-market breadth, 52-week highs and lows, and top movers for the latest session. Null when not published yet. */
+export async function fetchPulse(m: Manifest, net: Net = realNet): Promise<Pulse | null> {
+  const f = m.pulse?.file
+  return f && m.urls[f] ? net.gz<Pulse>(m.urls[f]) : null
 }
 
 export type SearchItem = [id: string, symbol: string, name: string, isin: string, sector: string]

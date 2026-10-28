@@ -7,7 +7,7 @@ import { dateOnly, pct, price, rupees, timeOnly, tone } from '../format'
 import { indexStats } from '../../indices'
 import { TF_NAME, TimeframeBar, useChartTimeframe, useTimeframeData, type TimeframeData } from '../components/timeframe'
 import { isIntraday } from '../../domain/timeframes'
-import type { Timeframe } from '../../domain/types'
+import type { Instrument, Timeframe } from '../../domain/types'
 
 const DEFAULT_OPTS: ChartOptions = { sma20: false, sma50: true, sma200: true, ema20: false, volume: true, rsi: false, macd: false }
 const TOGGLES: { key: keyof ChartOptions; label: string }[] = [
@@ -17,8 +17,8 @@ const TOGGLES: { key: keyof ChartOptions; label: string }[] = [
 
 export function Charts() {
   const status = useApp(s => s.marketStatus)
-  const instruments = useApp(s => s.instruments)
-  const sets = useApp(s => s.sets)
+  const shortlist = useApp(s => s.shortlist)
+  const setFor = useApp(s => s.setFor)
   const settings = useApp(s => s.settings)
   const chartSymbol = useApp(s => s.chartSymbol)
   const extras = useApp(s => s.extras)
@@ -32,8 +32,12 @@ export function Charts() {
   const [showPlan, setShowPlan] = useState(true)
   useEffect(() => { try { localStorage.setItem('chartOpts', JSON.stringify(opts)) } catch { /* storage may be unavailable */ } }, [opts])
 
-  const id = chartSymbol ?? instruments[0]?.id
-  const set = id ? sets.get(id) ?? extras.get(id) : undefined
+  const id = chartSymbol ?? shortlist[0]?.instrumentId
+  // Subscribing to these is what makes live prices, newly opened stocks and freshly loaded market data redraw the page.
+  const liveSets = useApp(s => s.sets)
+  const marketCounts = useApp(s => s.market.counts)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const set = useMemo(() => (id ? setFor(id) : undefined), [id, setFor, liveSets, extras, marketCounts])
   const strategy = STRATEGIES.find(s => s.id === strategyId)!
   const isIndex = set?.instrument.kind === 'index'
   const [tf, setTf] = useChartTimeframe()
@@ -55,6 +59,7 @@ export function Charts() {
     )
   }
   if (set && isIndex) return <IndexView set={set} opts={opts} setOpts={setOpts} />
+  if (!id) return <><PageHeader title="Charts" /><EmptyChart /></>
   if (status === 'error' || !set || !plan) return <><PageHeader title="Charts" /><NoData /></>
 
   const c = set.candles
@@ -167,14 +172,19 @@ const Row = ({ k, v, cls = '' }: { k: string; v: string; cls?: string }) => (
   <div><dt className="label">{k}</dt><dd className={`mt-0.5 font-medium ${cls}`}>{v}</dd></div>
 )
 
-/** One picker for indices and stocks: indices come from the dashboard's list, stocks from the tracked set plus anything opened. */
+/** One picker for indices and stocks: indices from the dashboard's list, stocks from your watchlist plus anything you opened. */
 function InstrumentPicker({ id }: { id: string | undefined }) {
-  const instruments = useApp(s => s.instruments)
+  const shortlist = useApp(s => s.shortlist)
+  const setFor = useApp(s => s.setFor)
   const extras = useApp(s => s.extras)
   const levels = useApp(s => s.indexLevels)
   const openChart = useApp(s => s.openChart)
   const openIndex = useApp(s => s.openIndex)
-  const stocks = [...instruments, ...[...extras.values()].map(e => e.instrument).filter(i => i.kind !== 'index')]
+  const byId = new Map<string, Instrument>()
+  for (const s of shortlist) { const i = setFor(s.instrumentId)?.instrument; if (i) byId.set(i.id, i) }
+  for (const e of extras.values()) if (e.instrument.kind !== 'index') byId.set(e.instrument.id, e.instrument)
+  if (id && !byId.has(id)) { const cur = setFor(id)?.instrument; if (cur && cur.kind !== 'index') byId.set(id, cur) }
+  const stocks = [...byId.values()]
   return (
     <select className="field !w-auto min-w-48" value={id} aria-label="Instrument" onChange={e => (levels.some(l => l.id === e.target.value) ? openIndex(e.target.value) : openChart(e.target.value))}>
       {levels.length > 0 && <optgroup label="Indices">{levels.map(l => <option key={l.id} value={l.id}>{l.id.startsWith('BSE:') ? 'BSE' : 'NSE'} · {l.name}</option>)}</optgroup>}
@@ -279,5 +289,17 @@ function ChartArea({ td, tf, options, plan, height }: { td: TimeframeData; tf: T
         <span>Chart by TradingView</span>
       </div>
     </>
+  )
+}
+
+function EmptyChart() {
+  const go = useApp(s => s.go)
+  return (
+    <div className="card flex flex-col items-center gap-2 px-6 py-14 text-center">
+      <div className="text-3xl text-mute">▤</div>
+      <div className="font-medium">Pick something to chart</div>
+      <p className="max-w-md text-sm text-mute">Search for any NSE or BSE stock in the box at the top, click an index on the dashboard, or star stocks to build a watchlist.</p>
+      <button className="btn btn-primary mt-2" onClick={() => go('dashboard')}>Go to the dashboard</button>
+    </div>
   )
 }

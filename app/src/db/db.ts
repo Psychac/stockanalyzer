@@ -119,7 +119,8 @@ export const clearSession = async () => {
 
 export async function loadDataSource(): Promise<DataSource> {
   const v = (await db.settings.get('dataSource'))?.value
-  return v === 'fyers' || v === 'breeze' ? v : 'demo'
+  // New installs use the shared end-of-day data, which needs no broker. Demo stays available, and is remembered if chosen.
+  return v === 'fyers' || v === 'breeze' || v === 'demo' ? v : 'market'
 }
 export const saveDataSource = (v: DataSource) => db.settings.put({ key: 'dataSource', value: v })
 

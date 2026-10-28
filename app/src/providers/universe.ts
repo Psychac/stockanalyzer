@@ -1,6 +1,10 @@
 import type { Instrument } from '../domain/types'
 
-/** [NSE symbol, company name, sector]. Symbols were checked against FYERS NSE_CM (cash segment) on 2026-10-27. */
+/**
+ * The synthetic stocks used by demo mode ONLY: fake prices need a fake universe. Nothing else in the app has a built-in list of
+ * stocks; real data comes from the market-wide files, the user's watchlist, and search.
+ * [NSE symbol, company name, sector]
+ */
 const ROWS: [string, string, string][] = [
   ['RELIANCE', 'Reliance Industries', 'Energy'],
   ['TCS', 'Tata Consultancy Services', 'IT'],
@@ -56,4 +60,4 @@ const ROWS: [string, string, string][] = [
 
 export const BENCHMARK: Instrument = { id: 'NSE:NIFTY50', exchange: 'NSE', symbol: 'NIFTY 50', name: 'Nifty 50', sector: 'Index', kind: 'index' }
 
-export const UNIVERSE: Instrument[] = ROWS.map(([symbol, name, sector]) => ({ id: `NSE:${symbol}`, exchange: 'NSE', symbol, name, sector, kind: 'equity' }))
+export const DEMO_UNIVERSE: Instrument[] = ROWS.map(([symbol, name, sector]) => ({ id: `NSE:${symbol}`, exchange: 'NSE', symbol, name, sector, kind: 'equity' }))

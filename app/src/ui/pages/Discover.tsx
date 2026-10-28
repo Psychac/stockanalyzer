@@ -95,7 +95,7 @@ export function Discover() {
   const [editing, setEditing] = useState<{ cfg: ScannerConfig; isNew: boolean } | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [universe, setUniverse] = useState<Universe>(() => {
-    try { const v = localStorage.getItem('scanUniverse'); return v === 'NSE' || v === 'BSE' || v === 'ALL' ? v : 'tracked' } catch { return 'tracked' }
+    try { const v = localStorage.getItem('scanUniverse'); return v === 'NSE' || v === 'BSE' || v === 'ALL' || v === 'watchlist' ? v : 'NSE' } catch { return 'NSE' }
   })
   const [limit, setLimit] = useState(100)
   const [listedOnce, setListedOnce] = useState(() => { try { return localStorage.getItem('listedOnce') !== '0' } catch { return true } })
@@ -109,19 +109,20 @@ export function Discover() {
   const lastRun = runs[sel.id]
   const stale = lastRun && lastRun.scannerVersion !== sel.version
   const marketSectors = useApp(s => s.marketSectors)
-  // Tracked stocks and the market-wide list name sectors differently; both are offered, and a stock matches on its own name.
+  // Live/demo stocks and the market-wide list name sectors differently; both are offered, and a stock matches on its own name.
   const sectors = useMemo(() => [...new Set([...instruments.map(i => i.sector), ...marketSectors])].sort(), [instruments, marketSectors])
   const matches = lastRun?.results.filter(r => r.matched) ?? []
   const shown = lastRun?.matchesOnly || !showAll ? matches : lastRun?.results ?? []
   const visible = shown.slice(0, limit)
   const blocked = sel.requires ? REQUIRES_LABEL[sel.requires] : null
 
-  const marketScan = universe !== 'tracked'
+  const marketScan = universe !== 'watchlist'
+  const watchCount = useApp(s => s.shortlist.length)
   const scanning = !!scan || market.status === 'loading'
   const onRun = () => {
     setLimit(100)
     if (marketScan) void runMarketScan(sel, universe, { listedOnce })
-    else run(sel)
+    else void run(sel)
     // On a phone the results sit below the fold; bring them into view.
     if (window.innerWidth < 1024) setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
   }
@@ -151,7 +152,7 @@ export function Discover() {
       <PageHeader
         title="Discover"
         subtitle="Scanners are saved configurations run by one shared engine. Built-in presets stay intact; edit a copy."
-        actions={<>{universe !== 'tracked' ? <span className="chip border-accent/40 text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent" />EOD · SHARED DATA</span> : <span className="hidden md:inline-flex"><DataBadge set={benchmark} /></span>}<button className="btn btn-primary" onClick={() => setEditing({ cfg: blankScanner(), isNew: true })}>+ New scanner</button></>}
+        actions={<>{universe !== 'watchlist' ? <span className="chip border-accent/40 text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent" />EOD · SHARED DATA</span> : <span className="hidden md:inline-flex"><DataBadge set={benchmark} /></span>}<button className="btn btn-primary" onClick={() => setEditing({ cfg: blankScanner(), isNew: true })}>+ New scanner</button></>}
       />
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
         <div className="lg:hidden">
@@ -205,7 +206,7 @@ export function Discover() {
                 <p className="mt-1 max-w-xl text-sm text-mute">{sel.description}</p>
               </div>
               <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-                <button className="btn btn-primary order-first w-full !py-2.5 sm:order-last sm:w-auto sm:!py-2" disabled={!!blocked || scanning || (!marketScan && status !== 'ready')} onClick={onRun}>{scanning ? 'Scanning…' : lastRun ? 'Re-run scan' : 'Run scan'}</button>
+                <button className="btn btn-primary order-first w-full !py-2.5 sm:order-last sm:w-auto sm:!py-2" disabled={!!blocked || scanning || (!marketScan && (status !== 'ready' || watchCount === 0))} onClick={onRun}>{scanning ? 'Scanning…' : lastRun ? 'Re-run scan' : 'Run scan'}</button>
                 <button className="btn btn-sm sm:!px-3.5 sm:!py-2 sm:!text-sm" onClick={edit}>{isPreset(sel.id) ? 'Customize copy' : 'Edit'}</button>
                 {!isPreset(sel.id) && <>
                   <button className="btn btn-sm sm:!px-3.5 sm:!py-2 sm:!text-sm" onClick={() => void save(duplicateScanner(sel)).then(() => setNote('Duplicated.'))}>Duplicate</button>
@@ -226,7 +227,7 @@ export function Discover() {
             {blocked && <p className="mt-3 rounded-lg border border-warn/30 bg-warn/5 p-2.5 text-xs text-warn">{blocked}. This preset is shown for completeness and cannot run on the demo data source.</p>}
           </section>
 
-          {!lastRun && !blocked && !scanning && <Empty icon="⌕" title="Run this scanner">{marketScan ? 'Evaluates every liquid stock in the selected exchange(s) on the latest end-of-day close.' : `Evaluates ${instruments.length} tracked stocks against the rules on the latest candle.`}</Empty>}
+          {!lastRun && !blocked && !scanning && <Empty icon="⌕" title="Run this scanner">{marketScan ? 'Evaluates every liquid stock in the selected exchange(s) on the latest end-of-day close.' : watchCount === 0 ? 'Your watchlist is empty. Star stocks from search or scan results, or choose All NSE or All BSE.' : `Evaluates the ${watchCount} stock${watchCount === 1 ? '' : 's'} on your watchlist against the rules on the latest candle.`}</Empty>}
           {scanning && <ScanProgress />}
 
           {lastRun && (
@@ -256,15 +257,16 @@ export function Discover() {
   )
 }
 
-type Universe = 'tracked' | 'NSE' | 'BSE' | 'ALL'
+type Universe = 'watchlist' | 'NSE' | 'BSE' | 'ALL'
 
 function UniversePicker({ universe, onPick, listedOnce, onListedOnce }: { universe: Universe; onPick: (u: Universe) => void; listedOnce: boolean; onListedOnce: (v: boolean) => void }) {
   const counts = useApp(s => s.market.counts)
+  const watchCount = useApp(s => s.shortlist.length)
   const opts: { key: Universe; label: string; hint?: string }[] = [
-    { key: 'tracked', label: 'Tracked 50', hint: 'live source' },
     { key: 'NSE', label: 'All NSE', hint: counts.NSE ? `${counts.NSE.toLocaleString('en-IN')}` : undefined },
     { key: 'BSE', label: 'All BSE', hint: counts.BSE ? `${counts.BSE.toLocaleString('en-IN')}` : undefined },
     { key: 'ALL', label: 'Both' },
+    { key: 'watchlist', label: 'My watchlist', hint: watchCount ? String(watchCount) : 'empty' },
   ]
   return (
     <div className="mt-4">
@@ -295,7 +297,7 @@ function MarketNote() {
   return (
     <div className="mt-3 rounded-lg border border-line/70 bg-bg/40 p-2.5 text-xs text-mute">
       Uses end-of-day data from your shared backend (NSE and BSE files, liquid stocks only), screened on this device. The first scan downloads
-      about 6 MB per exchange once; after that only each day&rsquo;s small update is fetched. Stocks outside the tracked 50 have no live prices.
+      about 6 MB per exchange once; after that only each day&rsquo;s small update is fetched. Stocks scanned this way have end-of-day prices only.
       {index && <span> Industry is known for {withSector.toLocaleString('en-IN')} of {index.length.toLocaleString('en-IN')} stocks (the free Nifty list, mostly the largest companies); the rest are Unclassified, so choosing a sector leaves them out.</span>}
       {market.date && <span className="text-ink"> Data as of {market.date}.</span>}
       {market.status === 'error' && market.message && <span className="mt-1 block text-down">{market.message}</span>}

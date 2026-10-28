@@ -32,7 +32,8 @@ export interface MarketDataProvider {
   connect(): Promise<void>
   disconnect(): Promise<void>
   getConnectionStatus(): ConnectionStatus
-  getInstruments(): Promise<Instrument[]>
+  /** Only demo data has a built-in list; live providers serve whichever stocks the app asks for. */
+  getInstruments?(): Promise<Instrument[]>
   getHistoricalCandles(instrument: Instrument, interval: Timeframe, bars: number): Promise<CandleSet>
   /** Candles from `sinceMs` onwards. Lets callers extend a cache instead of refetching everything. */
   getCandlesSince?(instrument: Instrument, interval: Timeframe, sinceMs: number): Promise<Candle[]>

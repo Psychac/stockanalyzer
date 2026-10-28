@@ -1,6 +1,6 @@
 import type { Candle, CandleSet, Instrument, Timeframe } from '../domain/types'
 import type { ConnectionStatus, MarketDataProvider, Quote } from './types'
-import { BENCHMARK, UNIVERSE } from './universe'
+import { BENCHMARK, DEMO_UNIVERSE } from './universe'
 
 /** [base price, avg traded value ₹ Cr, beta, daily vol %] per NSE symbol. Synthetic. */
 const PARAMS: Record<string, [number, number, number, number]> = {
@@ -164,7 +164,7 @@ function all(): Map<string, Candle[]> {
   if (cache?.key === key) return cache.map
   const mkt = marketReturns()
   const map = new Map<string, Candle[]>()
-  UNIVERSE.forEach((inst, idx) => map.set(inst.id, build(inst, PARAMS[inst.symbol], days, mkt, idx)))
+  DEMO_UNIVERSE.forEach((inst, idx) => map.set(inst.id, build(inst, PARAMS[inst.symbol], days, mkt, idx)))
   // Benchmark: market series scaled to an index-like level.
   const bench: Candle[] = []
   let level = 22000
@@ -192,7 +192,7 @@ export class DemoProvider implements MarketDataProvider {
   async connect() {}
   async disconnect() {}
   getConnectionStatus(): ConnectionStatus { return { state: 'demo', note: 'Synthetic prices for development. Not real market data.' } }
-  async getInstruments() { return UNIVERSE }
+  async getInstruments() { return DEMO_UNIVERSE }
 
   async getHistoricalCandles(instrument: Instrument, interval: Timeframe, bars: number): Promise<CandleSet> {
     if (interval !== '1D') throw new Error('Demo provider only supports daily candles')

@@ -7,6 +7,9 @@ export function Shortlist() {
   const shortlist = useApp(s => s.shortlist)
   const setFor = useApp(s => s.setFor)
   const marketStatus = useApp(s => s.market.status)
+  // Subscriptions that make market stocks and live prices resolve once their data arrives (setFor reads the store directly).
+  useApp(s => s.market.counts)
+  useApp(s => s.sets)
   const update = useApp(s => s.updateShortlist)
   const remove = useApp(s => s.removeFromShortlist)
   const openChart = useApp(s => s.openChart)
@@ -15,7 +18,7 @@ export function Shortlist() {
   if (shortlist.length === 0) {
     return (
       <>
-        <PageHeader title="Shortlist" subtitle="Candidates you are researching, grouped by status." />
+        <PageHeader title="Shortlist" subtitle="Your watchlist: the stocks you follow, grouped by research status. With a live source connected, NSE stocks here get live prices." />
         <Empty icon="☆" title="Nothing shortlisted yet">
           Run a scanner in Discover and star promising stocks. They are saved on this device and available offline.
           <div className="mt-4"><button className="btn btn-primary" onClick={() => go('discover')}>Go to Discover</button></div>

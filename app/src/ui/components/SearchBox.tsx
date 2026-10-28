@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '../../store'
-import { UNIVERSE } from '../../providers/universe'
 import { loadMaster, rankMatches, type MasterRow } from '../../providers/breeze/master'
 
 type Hit = {
@@ -9,16 +8,16 @@ type Hit = {
   name: string
   ex: 'NSE' | 'BSE'
   /** Where the price data comes from if you open it. */
-  kind: 'tracked' | 'market' | 'breeze'
+  kind: 'live' | 'market' | 'breeze'
   sector?: string
   row?: MasterRow
 }
 
-const KIND_LABEL: Record<Hit['kind'], string> = { tracked: 'Tracked', market: 'End-of-day', breeze: 'On demand' }
+const KIND_LABEL: Record<Hit['kind'], string> = { live: 'Live', market: 'End-of-day', breeze: 'On demand' }
 
 /**
  * Global stock search across NSE and BSE. The market list (every liquid stock on both exchanges) is a small file, so searching
- * costs no price download. Opening a stock outside the tracked 50 then loads that exchange's data once (about 6 MB, cached),
+ * costs no price download. Opening a stock then loads that exchange's data once (about 6 MB, cached) unless it is already loaded,
  * or, for NSE stocks when Breeze is connected, fetches just that stock.
  */
 export function SearchBox() {
@@ -26,6 +25,8 @@ export function SearchBox() {
   const index = useApp(s => s.searchIndex)
   const loadSearchIndex = useApp(s => s.loadSearchIndex)
   const openChart = useApp(s => s.openChart)
+  const liveSets = useApp(s => s.sets)
+  const demo = useApp(s => s.source === 'demo')
   const openStock = useApp(s => s.openStock)
   const openMarketStock = useApp(s => s.openMarketStock)
   const [q, setQ] = useState('')
@@ -48,26 +49,26 @@ export function SearchBox() {
   }, [])
 
   const all = useMemo<Hit[]>(() => {
-    const tracked = new Set(UNIVERSE.map(i => `NSE:${i.symbol}`))
     const out = new Map<string, Hit>()
-    for (const i of UNIVERSE) out.set(`NSE:${i.symbol}`, { id: `NSE:${i.symbol}`, symbol: i.symbol, name: i.name, ex: 'NSE', kind: 'tracked', sector: i.sector })
+    // Stocks already loaded from the live source (or the demo) open straight away.
+    for (const s of liveSets.values()) out.set(s.instrument.id, { id: s.instrument.id, symbol: s.instrument.symbol, name: s.instrument.name, ex: s.instrument.exchange, kind: 'live', sector: s.instrument.sector })
     for (const [id, symbol, name, , sector] of index ?? []) {
       if (out.has(id)) continue
       out.set(id, { id, symbol, name: name || symbol, ex: id.startsWith('BSE:') ? 'BSE' : 'NSE', kind: 'market', sector: sector || undefined })
     }
     for (const r of master ?? []) {
       const id = `NSE:${r.symbol}`
-      if (!out.has(id) && !tracked.has(id)) out.set(id, { id, symbol: r.symbol, name: r.name, ex: 'NSE', kind: 'breeze', row: r })
+      if (!out.has(id)) out.set(id, { id, symbol: r.symbol, name: r.name, ex: 'NSE', kind: 'breeze', row: r })
     }
     return [...out.values()]
-  }, [index, master])
+  }, [index, master, liveSets])
 
   const hits = useMemo(() => (q.trim() ? rankMatches(all, q, h => h.symbol, h => h.name, 10) : []), [q, all])
 
   const pick = (h: Hit) => {
     setOpen(false)
     setQ('')
-    if (h.kind === 'tracked') openChart(h.id)
+    if (h.kind === 'live') openChart(h.id)
     else if (h.kind === 'breeze' && h.row) void openStock(h.row)
     else void openMarketStock(h.id)
   }
@@ -112,8 +113,9 @@ export function SearchBox() {
               </button>
             </li>
           ))}
+          {demo && <li className="border-b border-line/60 px-3 py-2 text-[11px] text-warn">Demo data is on: the demo stocks have synthetic prices. Search results below are real stocks.</li>}
           {hits.length === 0 && index && <li className="px-3 py-3 text-xs text-mute">No match. Try a symbol or part of the company name.</li>}
-          {hits.length > 0 && !index && <li className="border-t border-line/60 px-3 py-2 text-[11px] text-mute">Showing tracked stocks only: the full list could not be loaded.</li>}
+          {!index && hits.length === 0 && <li className="px-3 py-2 text-[11px] text-mute">The NSE and BSE stock list could not be loaded yet.</li>}
         </ul>
       )}
     </div>
