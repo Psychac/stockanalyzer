@@ -151,7 +151,9 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   // Rebuild when asked, or when the published data predates the current rules. A first-ever run has nothing to rebuild.
   const outdated = !!previous.latestDate && previous.dataVersion !== DATA_VERSION
   const rebuild = !!opts.rebuild || outdated
-  const m: Manifest = rebuild ? { ...emptyManifest(), rev: previous.rev ?? 0, meta: previous.meta, urls: {} } : previous
+  // The carried-over meta file is not rewritten, so its URL has to be carried over too.
+  const metaUrl = previous.meta ? previous.urls[previous.meta.file] : undefined
+  const m: Manifest = rebuild ? { ...emptyManifest(), rev: previous.rev ?? 0, meta: previous.meta, urls: previous.meta && metaUrl ? { [previous.meta.file]: metaUrl } : {} } : previous
   const h = await load(deps.store, m)
   let meta: Meta | null = m.meta ? await deps.store.getJson<Meta>(m.meta.file) : null
   let metaFresh = false
@@ -258,6 +260,13 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     if (m.indices && m.indices.file !== file) stale.push(m.indices.file)
     res.wrote.push(file)
     next.indices = { file, date: ix.date }
+    // A rebuild on the same date reuses the file name: the file just written must not be removed as "previous".
+    for (let i = stale.indexOf(file); i >= 0; i = stale.indexOf(file)) stale.splice(i, 1)
+  } else if (rebuild && previous.indices && previous.urls[previous.indices.file]) {
+    // The index fetch gave nothing: keep the previous file rather than publishing no indices at all.
+    next.indices = previous.indices
+    urls[previous.indices.file] = previous.urls[previous.indices.file]
+    for (let i = stale.indexOf(previous.indices.file); i >= 0; i = stale.indexOf(previous.indices.file)) stale.splice(i, 1)
   }
 
   for (const f of stale) delete urls[f]

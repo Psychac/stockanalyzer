@@ -356,8 +356,13 @@ describe('rebuild', () => {
     expect(now.rev).toBe(old.rev + 1)
     const nse = await store.getJson<{ dates: string[] }>(now.snapshots.NSE!.file)
     expect(nse!.dates).toHaveLength(3)
-    for (const f of oldFiles.filter(f => !f.startsWith('meta-'))) expect(store.files.has(f), f).toBe(false) // metadata is still valid, so it is kept
+    // Metadata is still valid, so it is kept. The indices file is rewritten under the same name (same date), so it stays too.
+    for (const f of oldFiles.filter(f => !f.startsWith('meta-') && !f.startsWith('indices-'))) expect(store.files.has(f), f).toBe(false)
     expect(now.meta).toEqual(old.meta)
+    // Every file the manifest points at must be downloadable: a missing url is what made the index strip vanish.
+    expect(now.urls[now.indices!.file]).toBeTruthy()
+    expect(store.files.has(now.indices!.file)).toBe(true)
+    expect(now.urls[now.meta!.file]).toBeTruthy()
   })
 })
 
