@@ -92,7 +92,7 @@ work with any data source, including none. A watchlist scan keeps non-matches so
   back gracefully. Intraday is not offered on demo data (synthetic prices must not sit beside real candles). The trade plan is built
   from daily bars, so its levels are drawn on the 1D chart only. Scanners remain daily.
 - Backend setup (Blob store, `APP_PASSWORD`, `CRON_SECRET`, first backfill) is in [`../docs/backend-design.md`](../docs/backend-design.md).
-- `npm run dev` proxies `/api/data` to the deployed site; set `MARKET_DATA_ORIGIN` to use another deployment.
+- `npm run dev` has no market data of its own: set `MARKET_DATA_ORIGIN` (in `app/.env`, see `.env.example`) to a deployment you control, and it proxies `/api/data` and `/api/auth` there. There is no default. Sign-in passwords typed in dev go to that origin.
 
 ### Prefilling the app key
 

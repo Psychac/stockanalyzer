@@ -43,9 +43,9 @@ The FYERS app secret is stored in IndexedDB when "remember" is checked and in `s
 Fix applied: `vercel.json` now sends `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`. The Content-Security-Policy is **Report-Only** for now, because I could not exercise the deployed app in a browser; open the console on a deployed copy, check for violations, and rename the header to `Content-Security-Policy` once it is clean. Also, the ingest secret and the relay code are no longer kept in `localStorage` (replaced by the cookie; old copies are removed on load), so two fewer secrets sit in the browser.
 Not done: the FYERS secret still lives in the browser, because FYERS is a pure PWA by design (the token exchange needs the secret). Moving it server-side would break that.
 
-**6. Hard-coded personal deployment URL in a public repo.**
-`vite.config.ts` proxies `/api/data` to `https://stockanalyzer-ivory.vercel.app` by default, so anyone cloning the repo sends dev traffic to that deployment.
-Fix: require `MARKET_DATA_ORIGIN` explicitly, with no default.
+**6. Hard-coded personal deployment URL in a public repo. FIXED** (not run; the repo's visibility was not checked).
+`vite.config.ts` proxied `/api/data` to a personal deployment by default, so anyone cloning the repo sent dev traffic there. The `/api/auth` proxy added for the sign-in made it worse: a cloner's dev password would have gone to that deployment too.
+Fix applied: no default. The proxies exist only when `MARKET_DATA_ORIGIN` is set (read from the environment or `app/.env`), and a startup warning says so when it is not. `.env.example`, the README and the spec say it is required for market data in dev. The old URL stays in git history; it is a public address, not a secret.
 
 ## Medium findings
 

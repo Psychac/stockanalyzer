@@ -1,10 +1,18 @@
 import { defineConfig } from 'vitest/config'
+import { loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { breezeHelper } from './vite/breezeHelper'
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+// Read app/.env too (process.env alone does not see it).
+const origin = loadEnv(mode, process.cwd(), '').MARKET_DATA_ORIGIN?.trim()
+if (command === 'serve' && mode !== 'test' && !origin) console.warn('[stock-analyzer] MARKET_DATA_ORIGIN is not set, so dev and preview have no market data or sign-in backend. Set it in app/.env to a deployment you trust (see .env.example).')
+// Local development has no api/data functions, so market data and sign-in come from a deployment you name. There is no default:
+// a default would send every clone of this repo to someone else's server.
+const proxy = origin ? Object.fromEntries(['/api/data', '/api/auth'].map(p => [p, { target: origin, changeOrigin: true }])) : {}
+return {
   base: './',
   plugins: [
     react(),
@@ -31,9 +39,8 @@ export default defineConfig({
       },
     }),
   ],
-  // Local development has no api/data functions, so read the shared market data from the deployed site. Override with
-  // MARKET_DATA_ORIGIN to point elsewhere.
-  server: { proxy: Object.fromEntries(['/api/data', '/api/auth'].map(p => [p, { target: process.env.MARKET_DATA_ORIGIN ?? 'https://stockanalyzer-ivory.vercel.app', changeOrigin: true }])) },
-  preview: { proxy: Object.fromEntries(['/api/data', '/api/auth'].map(p => [p, { target: process.env.MARKET_DATA_ORIGIN ?? 'https://stockanalyzer-ivory.vercel.app', changeOrigin: true }])) },
+  server: { proxy },
+  preview: { proxy },
   test: { include: ['src/**/*.test.ts', 'api/**/*.test.ts'] },
+}
 })

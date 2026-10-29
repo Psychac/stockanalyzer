@@ -56,7 +56,7 @@ Schema versions are additive: v1 user data, v2 candle cache and credentials, v3 
 |---|---|
 | Static PWA | `npm run build` (type-check plus Vite build). Installable and works offline for cached data. |
 | Vercel | Root Directory `app`. Functions pinned to Mumbai (`bom1`), an untested assumption about ICICI and foreign IPs. Cron `30 14 * * *` UTC (20:00 IST) calls `/api/data/ingest`. |
-| Local | `npm run dev` on port 5173. Serves the Breeze relay through a Vite plugin and proxies `/api/data` to the deployed site (`MARKET_DATA_ORIGIN` overrides it). |
+| Local | `npm run dev` on port 5173. Serves the Breeze relay through a Vite plugin and proxies `/api/data` and `/api/auth` to the deployment named by `MARKET_DATA_ORIGIN` (no default; without it dev has no market data). |
 
 A plain static host has no relay and no backend data; the app says so rather than failing silently, and falls back to demo data and cache.
 

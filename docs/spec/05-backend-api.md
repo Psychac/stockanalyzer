@@ -61,7 +61,7 @@ Manifest fields: `version`, `dataVersion`, `latestDate`, `snapshots{NSE,BSE}`, `
 | `APP_PASSWORD` | Server | The deployment's one password. `/api/auth` (GET status, POST `{password}` sign in, DELETE sign out) sets a signed, HttpOnly, SameSite=Strict cookie valid 30 days; changing the password signs every device out. Required for the Breeze relay and the in-app Update button on Vercel. Wrong attempts are slowed and locked out per server instance |
 | `CRON_SECRET` | Server | Bearer secret for the scheduled cron and scripts calling `/api/data/ingest` |
 | `VITE_BREEZE_APP_KEY` | Build | Optional prefill of the Breeze app key. Baked into the bundle, so never a secret. |
-| `MARKET_DATA_ORIGIN` | Local dev | Where `npm run dev` proxies `/api/data` |
+| `MARKET_DATA_ORIGIN` | Local dev | Required for market data in `npm run dev` and `vite preview`; where they proxy `/api/data` and `/api/auth`. No default. Read from `app/.env` |
 
 First-time setup: create the Blob store, set `CRON_SECRET`, then call `/api/data/ingest` with the bearer token repeatedly until it no longer reports hitting the time budget. Details in [`../backend-design.md`](../backend-design.md).
 
