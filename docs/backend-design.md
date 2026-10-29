@@ -73,8 +73,9 @@ Measured against the live exchange files:
 Setup on Vercel:
 
 1. Project, Storage, create a **Blob** store (public) and connect it. That adds `BLOB_READ_WRITE_TOKEN`.
-2. Add an environment variable `CRON_SECRET` (any long random string). Vercel sends it to the cron as a bearer token; the endpoint
-   refuses to run without it.
+2. Add environment variables `CRON_SECRET` and `APP_PASSWORD` (long random strings). Vercel sends `CRON_SECRET` to the cron as a
+   bearer token. `APP_PASSWORD` is what you type once per device in Settings to use the Update button and the Breeze relay.
+   The ingest endpoint accepts either, and refuses to run if neither is set.
 3. Backfill once: `curl -H "Authorization: Bearer <CRON_SECRET>" https://<deployment>/api/data/ingest`, repeating while the
    response has `"stopped": "time budget reached; run again to continue"`.
 4. The cron then runs daily at 14:30 UTC (20:00 IST, within Vercel's one-hour window on Hobby).
