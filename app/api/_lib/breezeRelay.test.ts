@@ -71,7 +71,7 @@ describe('relay: who may call it', () => {
     const { call } = await start()
     const r = await call('GET', '/api/breeze/ping')
     expect(r.status).toBe(200)
-    expect(r.json).toEqual({ helper: 'breeze-relay', needsCode: false })
+    expect(r.json).toEqual({ helper: 'breeze-relay', needsLogin: false })
     expect(r.headers['cache-control']).toBe('no-store')
   })
 
@@ -107,17 +107,17 @@ describe('relay: who may call it', () => {
   })
 })
 
-describe('relay: optional access code', () => {
-  it('lets ping through without the code but blocks everything that reaches ICICI', async () => {
-    const { call, upstream } = await start({ accessCode: 'letmein' })
-    expect((await call('GET', '/api/breeze/ping')).json).toEqual({ helper: 'breeze-relay', needsCode: true })
+describe('relay: sign-in', () => {
+  const signedIn = (req: { headers: Record<string, string | string[] | undefined> }) => req.headers.cookie === 'sa_session=ok'
+  it('lets ping through but blocks everything that reaches ICICI until signed in', async () => {
+    const { call, upstream } = await start({ authorize: signedIn, authHint: 'Sign in first.' })
+    expect((await call('GET', '/api/breeze/ping')).json).toEqual({ helper: 'breeze-relay', needsLogin: true })
     const none = await call('POST', '/api/breeze/session', {}, goodSession)
     expect(none.status).toBe(403)
-    expect(none.json.relayError).toBe('code')
-    expect((await call('POST', '/api/breeze/session', { 'x-relay-code': 'wrong' }, goodSession)).json.relayError).toBe('code')
-    expect((await call('GET', goodHistory, { ...sessionHeaders, 'x-relay-code': 'letmein1' })).json.relayError).toBe('code')
+    expect(none.json).toMatchObject({ relayError: 'auth', message: 'Sign in first.' })
+    expect((await call('GET', goodHistory, { ...sessionHeaders, cookie: 'sa_session=bad' })).json.relayError).toBe('auth')
     expect(upstream.calls).toHaveLength(0)
-    expect((await call('POST', '/api/breeze/session', { 'x-relay-code': 'letmein' }, goodSession)).status).toBe(200)
+    expect((await call('POST', '/api/breeze/session', { cookie: 'sa_session=ok' }, goodSession)).status).toBe(200)
     expect(upstream.calls).toHaveLength(1)
   })
 })

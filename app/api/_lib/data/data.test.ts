@@ -243,6 +243,12 @@ describe('ingest', () => {
   it('accepts a one-exchange day once it is old enough to be a genuine exchange holiday', async () => {
     const r = await advance({ store: memoryStore(), ...world({ today: '2026-10-28', nseOnly: ['2026-10-20'] }) }, { startDate: '2026-10-20' })
     expect(r.applied[0]).toBe('2026-10-20')
+    expect(r.oneSided).toEqual([{ date: '2026-10-20', missing: 'BSE' }]) // applied, but never silently
+  })
+
+  it('reports no one-sided days when both exchanges published', async () => {
+    const r = await advance({ store: memoryStore(), ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-27' })
+    expect(r.oneSided).toBeUndefined()
   })
 
   it("treats BSE's HTML page for a missing day as no file, not as an error", async () => {
@@ -457,18 +463,35 @@ describe('automatic rebuild when the data version is outdated', () => {
     expect(second.applied).toEqual([])
   })
 
-  it('a rebuild cut short by the time budget continues instead of starting over', async () => {
+  it('a rebuild cut short by the time budget leaves the published data alone and finishes next run', async () => {
     const store = memoryStore()
     await advance({ store, ...world({ today: '2026-10-27' }) }, { startDate: '2026-10-26' })
     const m = JSON.parse(JSON.stringify(store.manifest())); delete m.dataVersion
     await store.putManifest(m)
+    const liveFiles = [...store.files.keys()]
     const cut = await advance({ store, ...world({ today: '2026-10-28' }) }, { startDate: '2026-10-19', maxDays: 3 })
     expect(cut.rebuilt).toBe(true)
+    expect(cut.staged).toBe(true)
     expect(cut.applied).toHaveLength(3)
+    // Clients still see the old, complete data: same latest date, same files, all still downloadable.
+    const mid = store.manifest()!
+    expect(mid.latestDate).toBe('2026-10-27')
+    expect(mid.dataVersion).toBeUndefined()
+    expect(mid.snapshots).toEqual(m.snapshots)
+    for (const f of liveFiles) expect(store.files.has(f), f).toBe(true)
+    expect(mid.staging?.latestDate).toBe('2026-10-21')
     const rest = await advance({ store, ...world({ today: '2026-10-28' }) })
-    expect(rest.rebuilt).toBeUndefined() // the version was stamped, so this is a plain continuation
-    expect(rest.applied[0]).toBe('2026-10-22')
+    expect(rest.staged).toBeUndefined()
+    expect(rest.applied[0]).toBe('2026-10-22') // resumed from the staged progress, not restarted
     expect(rest.stopped).toBeNull()
+    const done = store.manifest()!
+    expect(done.latestDate).toBe('2026-10-28')
+    expect(done.dataVersion).toBe(DATA_VERSION)
+    expect(done.staging).toBeUndefined()
+    for (const f of liveFiles.filter(f => !f.startsWith('meta-') && !f.startsWith('indices-'))) expect(store.files.has(f), f).toBe(false)
+    for (const f of Object.keys(done.urls)) expect(store.files.has(f), f).toBe(true)
+    const nse = await store.getJson<{ dates: string[] }>(done.snapshots.NSE!.file)
+    expect(nse!.dates[0]).toBe('2026-10-19')
   })
 
   it('never rebuilds a brand-new, empty store', async () => {

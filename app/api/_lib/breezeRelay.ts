@@ -1,6 +1,6 @@
 import https from 'node:https'
-import { timingSafeEqual } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { hasSession } from './auth.js'
 
 /**
  * Relay for ICICI Breeze, which a browser cannot call directly: its login is a GET with a JSON body and its data host
@@ -9,7 +9,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
  *
  * It is stateless and holds no credentials: the caller's own app key and session token pass through to ICICI and are
  * never stored or logged. Because a deployed copy is a public URL, it is deliberately narrow: two fixed ICICI
- * endpoints, whitelisted parameters, same-origin callers only, and an optional shared access code.
+ * endpoints, whitelisted parameters, same-origin callers only, and a sign-in (see auth.ts) when deployed.
  *
  * The underscore folder keeps Vercel from exposing this file as a route.
  */
@@ -32,8 +32,10 @@ const PARAM_VALUE = /^[A-Za-z0-9:.+\-_ ]{0,64}$/
 const CREDENTIAL = /^[!-~]{1,512}$/
 
 export interface RelayOptions {
-  /** Shared secret callers must send as X-Relay-Code. Unset means no code is required. */
-  accessCode?: string
+  /** Decides whether a call may reach ICICI (a signed-in browser). Unset means no check, which is only right for a local dev server. */
+  authorize?: (req: IncomingMessage) => boolean
+  /** What to tell a caller that failed `authorize`. */
+  authHint?: string
   /** Dev servers only: also require a loopback Host header, which blocks DNS-rebinding attacks. */
   loopbackOnly?: boolean
   /** Injectable for tests. */
@@ -51,18 +53,12 @@ function send(res: ServerResponse, status: number, body: unknown) {
 }
 
 /** Refusals from the relay itself carry `relayError`, which the app uses to tell them apart from ICICI's own errors. */
-const refuse = (res: ServerResponse, status: number, relayError: 'origin' | 'code' | 'request' | 'method', message: string) =>
+const refuse = (res: ServerResponse, status: number, relayError: 'origin' | 'auth' | 'request' | 'method', message: string) =>
   send(res, status, { relayError, message })
 
 const header = (req: IncomingMessage, name: string) => {
   const v = req.headers[name]
   return typeof v === 'string' ? v : undefined
-}
-
-function sameSecret(a: string, b: string): boolean {
-  const x = Buffer.from(a)
-  const y = Buffer.from(b)
-  return x.length === y.length && timingSafeEqual(x, y)
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -112,8 +108,8 @@ export function createRelay(o: RelayOptions = {}) {
       try { originHost = new URL(origin).host } catch { /* opaque origins ("null") fall through and are refused */ }
       if (originHost !== host) { refuse(res, 403, 'origin', 'Cross-origin requests are not allowed.'); return false }
     }
-    if (checkCode && o.accessCode && !sameSecret(header(req, 'x-relay-code') ?? '', o.accessCode)) {
-      refuse(res, 403, 'code', 'This relay needs its access code.')
+    if (checkCode && o.authorize && !o.authorize(req)) {
+      refuse(res, 403, 'auth', o.authHint ?? 'Sign in first.')
       return false
     }
     return true
@@ -150,7 +146,7 @@ export function createRelay(o: RelayOptions = {}) {
   const ping: Handler = async (req, res) => {
     if (req.method !== 'GET') return refuse(res, 405, 'method', 'Use GET.')
     if (!allowed(req, res, false)) return
-    send(res, 200, { helper: 'breeze-relay', needsCode: !!o.accessCode })
+    send(res, 200, { helper: 'breeze-relay', needsLogin: !!o.authorize })
   }
 
   const session: Handler = async (req, res) => {
@@ -211,3 +207,12 @@ export function createRelay(o: RelayOptions = {}) {
 
   return { ping, session, history, callback }
 }
+
+/**
+ * The relay as the Vercel functions run it. A deployed copy is a public URL, so on Vercel every call that reaches ICICI needs
+ * the signed-in cookie from /api/auth. Local runs (no VERCEL variable) are only reachable from this machine and need none.
+ */
+export const deployedRelay = (env: Record<string, string | undefined> = process.env) =>
+  createRelay(env.VERCEL
+    ? { authorize: req => hasSession(req, env), authHint: env.APP_PASSWORD ? 'Sign in on the Settings page first.' : 'This deployment has no APP_PASSWORD set, so nobody can sign in. Set it in the Vercel project.' }
+    : {})

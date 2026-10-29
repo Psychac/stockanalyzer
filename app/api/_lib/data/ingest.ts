@@ -48,6 +48,10 @@ export interface Result {
   stopped: string | null
   /** True when this run threw the old data away and started over (asked for, or the data version was outdated). */
   rebuilt?: boolean
+  /** Days applied with one exchange's file missing (an older day, so not just late). Its stocks have no bar that day. */
+  oneSided?: { date: string; missing: 'NSE' | 'BSE' }[]
+  /** True when a rebuild is still catching up: its progress is saved, but the published data is unchanged. */
+  staged?: boolean
   /** Set when metadata could not be refreshed; prices are unaffected. */
   metaError?: string
   latestDate: string | null
@@ -93,6 +97,10 @@ async function fetchDay(deps: Deps, url: string, parse: (t: string) => Parsed | 
   if (p.date !== date) return { kind: 'missing' }
   return { kind: 'rows', rows: p.rows }
 }
+
+const filesOf = (x: Manifest): string[] => [
+  ...Object.values(x.snapshots).map(r => r?.file), ...x.deltas.map(d => d.file), x.search?.file, x.pulse?.file, x.indices?.file, x.meta?.file,
+].filter((f): f is string => !!f)
 
 /** Rebuild history from the latest snapshot plus deltas. */
 async function load(store: Store, m: Manifest): Promise<History> {
@@ -150,10 +158,14 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   const previous = (await deps.store.getManifest()) ?? emptyManifest()
   // Rebuild when asked, or when the published data predates the current rules. A first-ever run has nothing to rebuild.
   const outdated = !!previous.latestDate && previous.dataVersion !== DATA_VERSION
-  const rebuild = !!opts.rebuild || outdated
+  // A rebuild is built off to the side (`previous.staging`) and only replaces the published data once it has caught up, so a run
+  // cut short by the time budget leaves what clients see untouched. Staging from older rules is thrown away.
+  const staging = previous.staging?.dataVersion === DATA_VERSION ? previous.staging : undefined
+  const discarded = previous.staging && !staging ? previous.staging : undefined
+  const rebuild = !!staging || !!opts.rebuild || outdated
   // The carried-over meta file is not rewritten, so its URL has to be carried over too.
   const metaUrl = previous.meta ? previous.urls[previous.meta.file] : undefined
-  const m: Manifest = rebuild ? { ...emptyManifest(), rev: previous.rev ?? 0, meta: previous.meta, urls: previous.meta && metaUrl ? { [previous.meta.file]: metaUrl } : {} } : previous
+  const m: Manifest = staging ?? (rebuild ? { ...emptyManifest(), rev: previous.rev ?? 0, meta: previous.meta, urls: previous.meta && metaUrl ? { [previous.meta.file]: metaUrl } : {} } : previous)
   const h = await load(deps.store, m)
   let meta: Meta | null = m.meta ? await deps.store.getJson<Meta>(m.meta.file) : null
   let metaFresh = false
@@ -182,6 +194,9 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
       continue
     }
     if ((nse.kind !== 'rows' || bse.kind !== 'rows') && recent) { res.stopped = `${d}: only one exchange has published so far`; break }
+    // An older day with only one file is either a one-exchange holiday (rare, real) or a bad download. Blocking on it would stall
+    // every later day, so it is applied but reported, never silent.
+    if (nse.kind !== 'rows' || bse.kind !== 'rows') (res.oneSided ??= []).push({ date: d, missing: nse.kind !== 'rows' ? 'NSE' : 'BSE' })
     const kept = admissible(h, rows)
     applyDay(h, d, kept)
     newDays.push({ date: d, rows: kept })
@@ -190,6 +205,9 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   }
 
   if (!newDays.length && !metaFresh) return res
+  // Published data is only replaced once the rebuild has reached the session the old data already had.
+  const publishing = !rebuild || (res.latestDate ?? '') >= (previous.latestDate ?? '')
+  if (!publishing) res.staged = true
   if (metaFresh && meta) enrichHistory(h, meta)
 
   const urls = { ...m.urls }
@@ -197,7 +215,7 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
   const rev = (m.rev ?? 0) + 1
   const next: Manifest = { ...m, dataVersion: DATA_VERSION, latestDate: res.latestDate, updatedAt: new Date(deps.now()).toISOString(), urls }
   const stale: string[] = []
-  const foldIntoSnapshot = metaFresh || !m.snapshots.NSE || newDays.length > 3 || new Set(m.deltas.map(x => x.date)).size + newDays.length > 7
+  const foldIntoSnapshot = rebuild || metaFresh || !m.snapshots.NSE || newDays.length > 3 || new Set(m.deltas.map(x => x.date)).size + newDays.length > 7
   if (foldIntoSnapshot) {
     prune(h)
     next.snapshots = {}
@@ -222,13 +240,8 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     }
     for (const r of Object.values(m.snapshots)) if (r) stale.push(r.file)
     stale.push(...m.deltas.map(x => x.file))
-    if (rebuild) {
-      // The old published set is replaced wholesale.
-      for (const r of Object.values(previous.snapshots)) if (r) stale.push(r.file)
-      stale.push(...previous.deltas.map(x => x.file))
-      if (previous.search) stale.push(previous.search.file)
-      if (previous.indices) stale.push(previous.indices.file)
-    }
+    // The old published set is replaced wholesale, but only once the rebuild is what clients get.
+    if (publishing) stale.push(...filesOf(previous))
     next.deltas = []
   } else {
     next.deltas = [...m.deltas]
@@ -249,11 +262,10 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     urls[pulseFile] = await deps.store.putJson(pulseFile, buildPulse(h))
     res.wrote.push(pulseFile)
     if (m.pulse && m.pulse.file !== pulseFile) stale.push(m.pulse.file)
-    if (rebuild && previous.pulse && previous.pulse.file !== pulseFile) stale.push(previous.pulse.file)
     next.pulse = { file: pulseFile, date: res.latestDate!, rev: next.rev }
   }
 
-  const ix = newDays.length ? await fetchIndices(deps, res.latestDate!) : { date: res.latestDate!, items: [] }
+  const ix = newDays.length && publishing ? await fetchIndices(deps, res.latestDate!) : { date: res.latestDate!, items: [] }
   if (ix.items.length) {
     const file = `indices-${ix.date}.json.gz`
     urls[file] = await deps.store.putJson(file, ix)
@@ -262,19 +274,23 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     next.indices = { file, date: ix.date }
     // A rebuild on the same date reuses the file name: the file just written must not be removed as "previous".
     for (let i = stale.indexOf(file); i >= 0; i = stale.indexOf(file)) stale.splice(i, 1)
-  } else if (rebuild && previous.indices && previous.urls[previous.indices.file]) {
+  } else if (rebuild && publishing && previous.indices && previous.urls[previous.indices.file]) {
     // The index fetch gave nothing: keep the previous file rather than publishing no indices at all.
     next.indices = previous.indices
     urls[previous.indices.file] = previous.urls[previous.indices.file]
     for (let i = stale.indexOf(previous.indices.file); i >= 0; i = stale.indexOf(previous.indices.file)) stale.splice(i, 1)
   }
 
-  for (const f of stale) delete urls[f]
+  if (discarded) stale.push(...filesOf(discarded))
+  // Never remove a file the manifest being published still points at, nor, while staging, anything clients are using now.
+  const keep = new Set([...filesOf(next), ...(publishing ? [] : filesOf(previous))])
+  const doomed = [...new Set(stale)].filter(f => !keep.has(f))
+  for (const f of doomed) delete urls[f]
   // Publish the manifest last: clients only ever see a complete set of files. Old files go after, so a client that
   // fetched the previous manifest a moment ago can still finish downloading.
-  await deps.store.putManifest(next)
+  await deps.store.putManifest(publishing ? next : { ...previous, staging: next })
   res.wrote.push('manifest.json')
-  await deps.store.remove(stale)
+  await deps.store.remove(doomed)
   return res
 }
 

@@ -33,21 +33,8 @@ export const defaultAppKey = (): string => {
   return typeof v === 'string' ? v.trim() : ''
 }
 
-const CODE_KEY = 'breeze.relayCode'
-
-/** Optional shared secret for a deployed relay (its BREEZE_RELAY_CODE setting). Kept in this browser only. */
-export function getRelayCode(): string {
-  try { return localStorage.getItem(CODE_KEY) ?? '' } catch { return '' }
-}
-export function setRelayCode(code: string) {
-  try { if (code) localStorage.setItem(CODE_KEY, code); else localStorage.removeItem(CODE_KEY) } catch { /* not persisted */ }
-}
-
 /** Required on every relay call. A custom header forces a CORS preflight, which stops other websites poking the relay. */
-export function helperHeaders(): Record<string, string> {
-  const code = getRelayCode()
-  return code ? { 'X-Breeze-Helper': '1', 'X-Relay-Code': code } : { 'X-Breeze-Helper': '1' }
-}
+export const helperHeaders = (): Record<string, string> => ({ 'X-Breeze-Helper': '1' })
 
 /** Register this as the redirect URL in the Breeze portal: ICICI POSTs the browser back, which only the callback accepts. */
 export const breezeRedirectUri = () => `${location.origin}/api/breeze/callback`
@@ -78,18 +65,18 @@ export function decodeSessionToken(b64: string): { userId: string; token: string
 
 export interface HelperInfo {
   available: boolean
-  /** The deployed relay was configured with an access code. */
-  needsCode: boolean
+  /** The deployed relay only answers a signed-in browser (see market/auth.ts). */
+  needsLogin: boolean
 }
 
 export async function helperInfo(fetchFn: FetchFn = defaultFetch): Promise<HelperInfo> {
   try {
     const res = await fetchFn(`${HELPER}/ping`, { headers: helperHeaders() })
-    const body = (await res.json().catch(() => null)) as { helper?: string; needsCode?: boolean } | null
+    const body = (await res.json().catch(() => null)) as { helper?: string; needsLogin?: boolean } | null
     const available = res.ok && body?.helper === 'breeze-relay'
-    return { available, needsCode: available && body?.needsCode === true }
+    return { available, needsLogin: available && body?.needsLogin === true }
   } catch {
-    return { available: false, needsCode: false }
+    return { available: false, needsLogin: false }
   }
 }
 
@@ -100,7 +87,7 @@ const HELPER_MISSING = 'The Breeze relay is not available here. Run the app with
 /** The relay refuses callers it does not trust before ICICI is ever contacted. */
 export function relayRefusal(body: { relayError?: string; message?: string } | null, status: number): ProviderError | null {
   if ((status !== 403 && status !== 400) || !body?.relayError) return null
-  if (body.relayError === 'code') return new ProviderError('The Breeze relay needs its access code. Enter it in Settings.', 'api')
+  if (body.relayError === 'auth') return new ProviderError(`The Breeze relay needs you signed in. ${body.message ?? ''}`.trim(), 'auth')
   return new ProviderError(`The Breeze relay refused the request: ${body.message ?? 'not allowed'}`, 'api')
 }
 

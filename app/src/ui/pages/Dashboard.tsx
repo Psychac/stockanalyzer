@@ -7,6 +7,7 @@ import { pulseFromSets } from '../../market/pulse'
 import type { ExchangePulse, PulseMover } from '../../market/client'
 import { DataBadge, Disclaimer, ExchangeTag, IndexStrip, NoData, PageHeader, Skeleton, Sparkline, StateBadge, StarButton } from '../components/bits'
 import { dateOnly, pct, price, tone } from '../format'
+import { staleNote } from '../../market/freshness'
 
 export function Dashboard() {
   const status = useApp(s => s.marketStatus)
@@ -74,6 +75,8 @@ export function Dashboard() {
         subtitle={asOfDate ? `${asOfDate}. Whole-market panels are end-of-day closes.${demo ? ' Demo stocks are synthetic.' : ''}` : 'Search for a stock, or run a scan in Discover.'}
         actions={<span className="hidden md:inline-flex"><DataBadge set={benchmark} /></span>}
       />
+
+      {!demo && staleNote(pulse?.date) && <p className="mb-3 rounded-lg border border-warn/40 bg-warn/10 p-2.5 text-xs text-warn">{staleNote(pulse?.date)}</p>}
 
       <IndexStrip />
 

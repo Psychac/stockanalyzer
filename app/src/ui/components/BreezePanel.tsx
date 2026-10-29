@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useApp } from '../../store'
 import { runBreezeDiagnostics, type DiagStep } from '../../providers/breeze/diagnostics'
-import { breezeRedirectUri, getRelayCode, setRelayCode } from '../../providers/breeze/session'
+import { breezeRedirectUri } from '../../providers/breeze/session'
 import { dateTime } from '../format'
+import { useAuth } from '../../market/auth'
+import { SignIn } from './SignIn'
 
 const dotClass = (s: DiagStep['status']) => (s === 'ok' ? 'bg-up/20 text-up' : s === 'fail' ? 'bg-down/15 text-down' : 'bg-warn/20 text-warn')
 const dotGlyph = (s: DiagStep['status']) => (s === 'ok' ? '✓' : s === 'fail' ? '✗' : '!')
@@ -13,10 +15,11 @@ export function BreezePanel() {
   const [code, setCode] = useState('')
   const [steps, setSteps] = useState<DiagStep[] | null>(null)
   const [running, setRunning] = useState(false)
+  const auth = useAuth()
   const session = breeze.session
   const loading = marketStatus === 'loading'
   const helperTone = breeze.helper === 'ok' ? 'border-up/30 bg-up/5 text-mute' : breeze.helper === 'missing' ? 'border-down/40 bg-down/5 text-down' : 'border-line text-mute'
-  useEffect(() => { void checkBreezeHelper() }, [checkBreezeHelper])
+  useEffect(() => { void checkBreezeHelper() }, [checkBreezeHelper, auth.signedIn])
 
   async function diagnose() {
     setRunning(true)
@@ -35,17 +38,10 @@ export function BreezePanel() {
               : 'Calls to ICICI are passed through the relay on this app’s own server. It stores nothing and only forwards your own login and history requests.'}
           </p>
         </div>
-        {breeze.needsCode && (
-          <label className="block">
-            <span className="label">Relay access code</span>
-            <input
-              className="field mt-1" type="password" autoComplete="off" placeholder="Set as BREEZE_RELAY_CODE on the server"
-              defaultValue={getRelayCode()}
-              onChange={e => setRelayCode(e.target.value.trim())}
-              onBlur={() => void checkBreezeHelper()}
-            />
-            <span className="mt-1 block text-[11px] text-mute">This relay is protected. The code is kept in this browser only.</span>
-          </label>
+        {breeze.needsLogin && !auth.signedIn && (
+          <div className="rounded-xl border border-line p-3">
+            <SignIn why="This relay only answers a signed-in browser." />
+          </div>
         )}
 
         <div className={`rounded-xl border p-3 text-sm ${session ? 'border-up/30 bg-up/5' : 'border-line'}`}>

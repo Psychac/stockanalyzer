@@ -22,6 +22,11 @@ export interface Manifest {
   pulse: FileRef | null
   rev: number
   updatedAt: string
+  /**
+   * A rebuild in progress. Clients ignore it and keep using the fields above; it is swapped in (and removed) once it has caught
+   * up with `latestDate`, so a rebuild cut short by the time budget never publishes a partial history.
+   */
+  staging?: Manifest
   /** Public URLs by file name, so clients need no knowledge of the storage host. */
   urls: Record<string, string>
 }

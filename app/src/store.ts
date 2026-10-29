@@ -61,7 +61,7 @@ interface State {
   marketError: string | null
   feed: Feed
   fyers: { appId: string; hasSecret: boolean; session: FyersSession | null; loginError: string | null }
-  breeze: { appKey: string; session: BreezeSession | null; loginError: string | null; helper: 'unknown' | 'ok' | 'missing'; needsCode: boolean }
+  breeze: { appKey: string; session: BreezeSession | null; loginError: string | null; helper: 'unknown' | 'ok' | 'missing'; needsLogin: boolean }
   instruments: Instrument[]
   sets: Map<string, CandleSet>
   benchmark: CandleSet | null
@@ -337,7 +337,7 @@ export const useApp = create<State>((set, get) => {
     marketError: null,
     feed: NO_FEED,
     fyers: { appId: '', hasSecret: false, session: null, loginError: null },
-    breeze: { appKey: '', session: null, loginError: null, helper: 'unknown', needsCode: false },
+    breeze: { appKey: '', session: null, loginError: null, helper: 'unknown', needsLogin: false },
     instruments: [],
     sets: new Map(),
     benchmark: null,
@@ -403,7 +403,7 @@ export const useApp = create<State>((set, get) => {
         userScanners: userScanners.filter(s => scannerSchema.safeParse(s).success), shortlist, settings, source,
         runs: Object.fromEntries(runs.map(r => [r.id, r])),
         fyers: { appId: creds?.appId ?? '', hasSecret: !!creds?.secret, session, loginError: null },
-        breeze: { appKey: bz?.appKey || defaultAppKey(), session: bz?.session && sessionValid(bz.session) ? bz.session : null, loginError: null, helper: get().breeze.helper, needsCode: get().breeze.needsCode },
+        breeze: { appKey: bz?.appKey || defaultAppKey(), session: bz?.session && sessionValid(bz.session) ? bz.session : null, loginError: null, helper: get().breeze.helper, needsLogin: get().breeze.needsLogin },
       })
     },
 
@@ -539,7 +539,7 @@ export const useApp = create<State>((set, get) => {
 
     async checkBreezeHelper() {
       const info = await helperInfo()
-      set({ breeze: { ...get().breeze, helper: info.available ? 'ok' : 'missing', needsCode: info.needsCode } })
+      set({ breeze: { ...get().breeze, helper: info.available ? 'ok' : 'missing', needsLogin: info.needsLogin } })
     },
 
     go(r) { location.hash = `#/${r}` },

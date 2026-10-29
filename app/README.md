@@ -91,7 +91,7 @@ work with any data source, including none. A watchlist scan keeps non-matches so
   endpoint as needing a login but does not enforce it today, so it could be closed; the chart says where the data is from and falls
   back gracefully. Intraday is not offered on demo data (synthetic prices must not sit beside real candles). The trade plan is built
   from daily bars, so its levels are drawn on the 1D chart only. Scanners remain daily.
-- Backend setup (Blob store, `CRON_SECRET`, first backfill) is in [`../docs/backend-design.md`](../docs/backend-design.md).
+- Backend setup (Blob store, `APP_PASSWORD`, `CRON_SECRET`, first backfill) is in [`../docs/backend-design.md`](../docs/backend-design.md).
 - `npm run dev` proxies `/api/data` to the deployed site; set `MARKET_DATA_ORIGIN` to use another deployment.
 
 ### Prefilling the app key
@@ -103,8 +103,8 @@ app but is not a login on its own. Do not hard-code it in source or commit it: t
 ### Deploying the relay on Vercel
 
 1. Import the GitHub repo in Vercel and set **Root Directory** to `app`. The Vite preset and `vercel.json` do the rest.
-2. Optional but recommended for a public URL: add `BREEZE_RELAY_CODE`. The relay then refuses every call that reaches ICICI
-   without a matching code, and Settings shows a field for it (kept in that browser only).
+2. Add `APP_PASSWORD` (any long random string). It is the one password for the deployment: on the Settings page, sign in
+   once per device to use the Breeze relay and the Update button. Without it the relay refuses every call that reaches ICICI.
 3. In the Breeze portal set the redirect URL to the callback address above.
 4. Open the deployed app, choose ICICI Breeze, log in, and press **Run test**.
 
@@ -112,7 +112,8 @@ app but is not a login on its own. Do not hard-code it in source or commit it: t
 
 The relay forwards two fixed ICICI endpoints, accepts only whitelisted parameters and same-origin callers, stores nothing and
 does not log request bodies. Your session token passes through the deployment on each call. It has no rate limiting of its own,
-so the access code is what stops a stranger spending your function quota.
+so the sign-in is what stops a stranger spending your function quota. Wrong passwords are slowed and then refused, but
+serverless instances do not share memory, so use a long random password.
 
 Why FYERS is the portable choice, what is verified and what is not: [`../docs/provider-feasibility.md`](../docs/provider-feasibility.md).
 

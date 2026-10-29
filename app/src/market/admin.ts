@@ -1,26 +1,18 @@
-/**
- * Runs the backend ingest from the app instead of curl. The endpoint wants `Authorization: Bearer $CRON_SECRET`, so the
- * secret is kept on this device (local storage, never in backups) and sent only to this app's own origin.
- */
+/** Runs the backend ingest from the app instead of curl. The endpoint accepts the signed-in cookie (see auth.ts). */
 import { COOLDOWN_MS, waitText, type IngestMode } from '../../api/_lib/data/throttle'
 export { COOLDOWN_MS, waitText }
 export type { IngestMode }
 
 export interface IngestReply { limited?: boolean; retryAfterSec?: number; applied?: string[]; skipped?: string[]; stopped?: string | null; latestDate?: string | null; rebuilt?: boolean; metaError?: string; error?: string }
-export type Post = (url: string, secret: string) => Promise<{ status: number; json: unknown }>
+export type Post = (url: string) => Promise<{ status: number; json: unknown }>
 
-const KEY = 'ingestSecret'
 const BUDGET_STOP = 'time budget'
 /** One run covers about four minutes of work, so even a full rebuild finishes well inside this. */
 const MAX_RUNS = 8
 
-export const loadIngestSecret = (): string => { try { return localStorage.getItem(KEY) ?? '' } catch { return '' } }
-export function saveIngestSecret(secret: string) {
-  try { if (secret) localStorage.setItem(KEY, secret); else localStorage.removeItem(KEY) } catch { /* not persisted */ }
-}
-
-export const realPost: Post = async (url, secret) => {
-  const r = await fetch(url, { method: 'GET', headers: { authorization: `Bearer ${secret}` }, cache: 'no-store' })
+export const realPost: Post = async url => {
+  // The signed-in cookie (see auth.ts) travels with the request; nothing secret is held by this page.
+  const r = await fetch(url, { method: 'GET', cache: 'no-store' })
   return { status: r.status, json: await r.json().catch(() => ({})) }
 }
 
@@ -51,17 +43,18 @@ export const adoptServerCooldown = (mode: IngestMode, retryAfterMs: number, now 
 export const cooldownLeft = (mode: IngestMode, now = Date.now(), last = lastIngestSuccess(mode)) => Math.max(0, last + COOLDOWN_MS[mode] - now)
 
 /** Calls the endpoint until it stops on something other than the time budget. A rebuild flag is only sent on the first run. */
-export async function runIngest(secret: string, mode: IngestMode, post: Post = realPost, onRun?: (n: number) => void): Promise<IngestSummary> {
+export async function runIngest(mode: IngestMode, post: Post = realPost, onRun?: (n: number) => void): Promise<IngestSummary> {
   const out: IngestSummary = { runs: 0, days: [], latestDate: null, rebuilt: false, note: null, status: 'partial' }
   for (let i = 0; i < MAX_RUNS; i++) {
     onRun?.(i + 1)
     const first = i === 0
     const q = first && mode === 'rebuild' ? '?rebuild=1' : first && mode === 'refreshMeta' ? '?refreshMeta=1' : ''
-    const { status, json } = await post(`/api/data/ingest${q}`, secret)
+    const { status, json } = await post(`/api/data/ingest${q}`)
     const r = json as IngestReply
     if (status === 429) throw new IngestLimited(r.error ?? 'Rate limited by the server.', Math.max(1, r.retryAfterSec ?? 60) * 1000)
-    if (status === 401) throw new Error('The ingest secret was rejected. Check it matches CRON_SECRET on the deployment.')
-    if (status !== 200) throw new Error(r.error ?? `The ingest failed (HTTP ${status}).`)
+    if (status === 401) throw new Error('Sign in first (Settings), then try again.')
+    // 502 with a `stopped` reason is a normal report of a run that hit a problem, not a failed call.
+    if (status !== 200 && !(status === 502 && r.stopped)) throw new Error(r.error ?? `The ingest failed (HTTP ${status}).`)
     out.runs++
     out.days.push(...(r.applied ?? []))
     out.latestDate = r.latestDate ?? out.latestDate

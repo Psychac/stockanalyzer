@@ -32,6 +32,10 @@ export function checkThrottle(state: ThrottleState | null, mode: IngestMode, now
 export const isFullSuccess = (r: { stopped?: string | null; metaError?: string }) =>
   !r.metaError && (!r.stopped || /not published yet/.test(r.stopped))
 
+/** A stop that needs attention (a failed download, changed file format), as opposed to running out of time or waiting for the exchanges. */
+export const isProblemStop = (r: { stopped?: string | null }) =>
+  !!r.stopped && !r.stopped.includes(BUDGET_STOP) && !/not published yet|only one exchange/.test(r.stopped)
+
 /** The state after a run that returned `r` for `mode`. */
 export function recordRun(state: ThrottleState | null, mode: IngestMode, r: { stopped?: string | null; metaError?: string }, now: number): ThrottleState {
   const next: ThrottleState = { done: { ...(state?.done ?? {}) } }

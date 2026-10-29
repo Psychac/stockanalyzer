@@ -5,7 +5,9 @@ import { Disclaimer, PageHeader } from '../components/bits'
 import { redirectUri } from '../../providers/fyers/auth'
 import { dateTime } from '../format'
 import { BreezePanel } from '../components/BreezePanel'
-import { IngestLimited, adoptServerCooldown, cooldownLeft, loadIngestSecret, markIngestSuccess, runIngest, saveIngestSecret, type IngestMode, waitText } from '../../market/admin'
+import { useAuth } from '../../market/auth'
+import { SignIn, SignOutButton } from '../components/SignIn'
+import { IngestLimited, adoptServerCooldown, cooldownLeft, markIngestSuccess, runIngest, type IngestMode, waitText } from '../../market/admin'
 
 const NumField = ({ label, value, onChange, suffix, step = 1 }: { label: string; value: number; onChange: (n: number) => void; suffix?: string; step?: number }) => (
   <label className="block">
@@ -176,10 +178,9 @@ function MarketDataCard() {
   )
 }
 
-/** Runs the backend ingest on demand, so nothing needs curl. The secret stays on this device. */
+/** Runs the backend ingest on demand, so nothing needs curl. You need to be signed in. */
 function IngestCard() {
-  const [saved, setSaved] = useState(loadIngestSecret)
-  const [secret, setSecret] = useState('')
+  const auth = useAuth()
   const [progress, setProgress] = useState<number | null>(null)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [now, setNow] = useState(Date.now)
@@ -194,19 +195,12 @@ function IngestCard() {
     return () => clearInterval(t)
   }, [waiting])
 
-  function save() {
-    saveIngestSecret(secret.trim())
-    setSaved(secret.trim())
-    setSecret('')
-    setMsg(null)
-  }
-
   async function run(mode: IngestMode) {
     if (left(mode) > 0) return
     if (mode === 'rebuild' && !confirm('Throw away the published market history and rebuild it? This takes several minutes.')) return
     setMsg(null)
     try {
-      const r = await runIngest(saved, mode, undefined, setProgress)
+      const r = await runIngest(mode, undefined, setProgress)
       if (r.status !== 'partial') markIngestSuccess(mode)
       setNow(Date.now())
       const days = r.days.length ? `Added ${r.days.length} day(s)` : 'Nothing new to add'
@@ -229,22 +223,18 @@ function IngestCard() {
         <h2 className="font-semibold">Update published data</h2>
         <p className="text-xs text-mute">Runs the daily ingest on your backend now, instead of waiting for the scheduled run. It repeats automatically until it has caught up. After a fully successful run the button pauses, so the backend is not hit repeatedly.</p>
       </div>
-      {saved ? (
+      {auth.signedIn ? (
         <>
           <div className="flex flex-wrap gap-2">
             <button className="btn btn-primary" disabled={busy || left('update') > 0} onClick={() => void run('update')}>{busy ? `Working… (run ${progress})` : label('update', 'Update now')}</button>
             <button className="btn" disabled={busy || left('refreshMeta') > 0} onClick={() => void run('refreshMeta')}>{label('refreshMeta', 'Refresh company info')}</button>
             <button className="btn text-down" disabled={busy || left('rebuild') > 0} onClick={() => void run('rebuild')}>{label('rebuild', 'Rebuild all')}</button>
-            <button className="btn" disabled={busy} onClick={() => { saveIngestSecret(''); setSaved(''); setMsg(null) }}>Forget secret</button>
+            <SignOutButton />
           </div>
           <p className="text-xs text-mute">Rebuild is only for after a change to how data is processed. Use Update now day to day.</p>
         </>
       ) : (
-        <div className="space-y-2">
-          <label className="block"><span className="label">Ingest secret (CRON_SECRET)</span><input className="field mt-1" type="password" autoComplete="off" value={secret} onChange={e => setSecret(e.target.value)} /></label>
-          <p className="text-xs text-mute">Remembered on this device only, stored unencrypted in this browser and never included in backups. It is sent only to this app's own server.</p>
-          <button className="btn btn-primary" disabled={!secret.trim()} onClick={save}>Save secret</button>
-        </div>
+        <SignIn why="Sign in to run an update." />
       )}
       {msg && <p className={`text-xs ${msg.ok ? 'text-up' : 'text-down'}`}>{msg.text}</p>}
     </section>

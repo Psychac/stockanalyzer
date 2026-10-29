@@ -5,6 +5,7 @@ import { scannerSchema, ruleLabel, fmtNum, type Group, type NodeResult, type Nod
 import { DataBadge, Disclaimer, Empty, ExchangeTag, PageHeader, ScoreRing, StarButton } from '../components/bits'
 import { ScannerBuilder } from '../components/ScannerBuilder'
 import { dateTime, pct, price, tone } from '../format'
+import { staleNote } from '../../market/freshness'
 
 function Tree({ n }: { n: NodeResult }) {
   if (n.type === 'rule') {
@@ -300,6 +301,7 @@ function MarketNote() {
       about 6 MB per exchange once; after that only each day&rsquo;s small update is fetched. Stocks scanned this way have end-of-day prices only.
       {index && <span> Industry is known for {withSector.toLocaleString('en-IN')} of {index.length.toLocaleString('en-IN')} stocks (the free Nifty list, mostly the largest companies); the rest are Unclassified, so choosing a sector leaves them out.</span>}
       {market.date && <span className="text-ink"> Data as of {market.date}.</span>}
+      {staleNote(market.date) && <span className="mt-1 block text-warn">{staleNote(market.date)}</span>}
       {market.status === 'error' && market.message && <span className="mt-1 block text-down">{market.message}</span>}
       {market.status === 'ready' && market.message && <span className="mt-1 block text-warn">{market.message}</span>}
     </div>
