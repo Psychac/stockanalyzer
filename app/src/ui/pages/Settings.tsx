@@ -1,10 +1,11 @@
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { exportData, importData, db } from '../../db/db'
 import { useApp } from '../../store'
 import { Disclaimer, PageHeader } from '../components/bits'
 import { redirectUri } from '../../providers/fyers/auth'
 import { dateTime } from '../format'
 import { BreezePanel } from '../components/BreezePanel'
+import { IngestLimited, adoptServerCooldown, cooldownLeft, loadIngestSecret, markIngestSuccess, runIngest, saveIngestSecret, type IngestMode, waitText } from '../../market/admin'
 
 const NumField = ({ label, value, onChange, suffix, step = 1 }: { label: string; value: number; onChange: (n: number) => void; suffix?: string; step?: number }) => (
   <label className="block">
@@ -64,6 +65,8 @@ export function SettingsPage() {
         <MarketDataCard />
 
         <MarketWideCard />
+
+        <IngestCard />
 
         <section className="card space-y-3 p-5">
           <h2 className="font-semibold">Backup &amp; restore</h2>
@@ -169,6 +172,81 @@ function MarketDataCard() {
           </div>
         </div>
       )}
+    </section>
+  )
+}
+
+/** Runs the backend ingest on demand, so nothing needs curl. The secret stays on this device. */
+function IngestCard() {
+  const [saved, setSaved] = useState(loadIngestSecret)
+  const [secret, setSecret] = useState('')
+  const [progress, setProgress] = useState<number | null>(null)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [now, setNow] = useState(Date.now)
+  const busy = progress !== null
+  const left = (m: IngestMode) => cooldownLeft(m, now)
+  const waiting = (['update', 'refreshMeta', 'rebuild'] as const).some(m => left(m) > 0)
+
+  // Tick only while a cooldown is running, so the countdown and the re-enabled button stay accurate.
+  useEffect(() => {
+    if (!waiting) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [waiting])
+
+  function save() {
+    saveIngestSecret(secret.trim())
+    setSaved(secret.trim())
+    setSecret('')
+    setMsg(null)
+  }
+
+  async function run(mode: IngestMode) {
+    if (left(mode) > 0) return
+    if (mode === 'rebuild' && !confirm('Throw away the published market history and rebuild it? This takes several minutes.')) return
+    setMsg(null)
+    try {
+      const r = await runIngest(saved, mode, undefined, setProgress)
+      if (r.status !== 'partial') markIngestSuccess(mode)
+      setNow(Date.now())
+      const days = r.days.length ? `Added ${r.days.length} day(s)` : 'Nothing new to add'
+      const head = r.status === 'updated' ? `Done. ${days}${r.rebuilt ? ' (rebuilt)' : ''}.` : r.status === 'current' ? 'Already up to date.' : `Stopped early. ${days}.`
+      setMsg({ ok: r.status !== 'partial', text: `${head} Latest data: ${r.latestDate ?? 'none'}.${r.note ? ` ${r.note}` : ''}${r.status === 'partial' ? ' You can try again.' : ' Reload the app to see it.'}` })
+    } catch (e) {
+      // The server's own limit: pause the button for as long as the server says, and explain why nothing ran.
+      if (e instanceof IngestLimited) { adoptServerCooldown(mode, e.retryAfterMs); setNow(Date.now()) }
+      setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setProgress(null)
+    }
+  }
+
+  const label = (m: IngestMode, text: string) => (left(m) > 0 ? `${text} (${waitText(left(m))})` : text)
+
+  return (
+    <section className="card space-y-3 p-5">
+      <div>
+        <h2 className="font-semibold">Update published data</h2>
+        <p className="text-xs text-mute">Runs the daily ingest on your backend now, instead of waiting for the scheduled run. It repeats automatically until it has caught up. After a fully successful run the button pauses, so the backend is not hit repeatedly.</p>
+      </div>
+      {saved ? (
+        <>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn btn-primary" disabled={busy || left('update') > 0} onClick={() => void run('update')}>{busy ? `Working… (run ${progress})` : label('update', 'Update now')}</button>
+            <button className="btn" disabled={busy || left('refreshMeta') > 0} onClick={() => void run('refreshMeta')}>{label('refreshMeta', 'Refresh company info')}</button>
+            <button className="btn text-down" disabled={busy || left('rebuild') > 0} onClick={() => void run('rebuild')}>{label('rebuild', 'Rebuild all')}</button>
+            <button className="btn" disabled={busy} onClick={() => { saveIngestSecret(''); setSaved(''); setMsg(null) }}>Forget secret</button>
+          </div>
+          <p className="text-xs text-mute">Rebuild is only for after a change to how data is processed. Use Update now day to day.</p>
+        </>
+      ) : (
+        <div className="space-y-2">
+          <label className="block"><span className="label">Ingest secret (CRON_SECRET)</span><input className="field mt-1" type="password" autoComplete="off" value={secret} onChange={e => setSecret(e.target.value)} /></label>
+          <p className="text-xs text-mute">Remembered on this device only, stored unencrypted in this browser and never included in backups. It is sent only to this app's own server.</p>
+          <button className="btn btn-primary" disabled={!secret.trim()} onClick={save}>Save secret</button>
+        </div>
+      )}
+      {msg && <p className={`text-xs ${msg.ok ? 'text-up' : 'text-down'}`}>{msg.text}</p>}
     </section>
   )
 }
