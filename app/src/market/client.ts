@@ -1,6 +1,7 @@
 import { applyDay, type DayRow, type Exchange, type History } from '../../api/_lib/data/history'
 import type { Candle, CandleSet, Instrument } from '../domain/types'
 import { sessionOpen } from '../domain/time'
+import { REFRESH_COOLDOWN_MS, needsRefresh } from '../../api/_lib/data/refresh'
 
 /** What `GET /api/data/manifest` returns. Mirrors the server's type (which cannot be imported: it pulls in Node modules). */
 export interface Manifest {
@@ -52,6 +53,26 @@ export const realNet: Net = {
 }
 
 export const fetchManifest = (net: Net = realNet) => net.json<Manifest>('/api/data/manifest')
+
+const ASKED_KEY = 'refreshAskedAt'
+
+/**
+ * After the close, ask the backend to pick up today's data instead of waiting for the nightly run. True when it published something
+ * new. The backend is rate limited itself; the timestamp here only keeps one device from asking again on every page load.
+ */
+export async function catchUp(m: Manifest, now = Date.now(), post: (url: string) => Promise<{ changed?: boolean }> = realRefresh): Promise<boolean> {
+  if (!needsRefresh(m, now)) return false
+  try {
+    if (now - Number(localStorage.getItem(ASKED_KEY) ?? 0) < REFRESH_COOLDOWN_MS) return false
+    localStorage.setItem(ASKED_KEY, String(now))
+  } catch { /* storage unavailable: the backend limit still applies */ }
+  try { return !!(await post('/api/data/refresh')).changed } catch { return false }
+}
+
+const realRefresh = async (url: string) => {
+  const r = await fetch(url, { cache: 'no-store' })
+  return r.ok ? ((await r.json()) as { changed?: boolean }) : {}
+}
 
 export type SyncKind = 'snapshot' | 'deltas' | 'none'
 

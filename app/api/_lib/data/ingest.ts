@@ -2,6 +2,7 @@ import { gunzipSync } from 'node:zlib'
 import { admissible, applyDay, emptyHistory, mergeHistories, prune, sliceOf, type DayRow, type History } from './history.js'
 import { parseBse, parseNse, type Parsed } from './parse.js'
 import { buildPulse } from './pulse.js'
+import { afterClose } from './refresh.js'
 import { buildSearchIndex, enrichHistory, enrichRow, INDUSTRY_LISTS, parseIndustryCsv, parseUpstoxNse, UPSTOX_NSE_MASTER, type Meta } from './meta.js'
 import { emptyManifest, type Manifest, type Store } from './store.js'
 
@@ -145,7 +146,11 @@ async function fetchIndices(deps: Deps, date: string): Promise<IndexFile> {
       const r = await deps.fetchJson(url)
       const candles = ((r.json as { data?: { candles?: unknown[][] } })?.data?.candles ?? []) as [string, number, number, number, number][]
       if (r.status !== 200 || !candles.length) continue
-      items.push({ id: ix.id, name: ix.name, bars: candles.map(c => [String(c[0]).slice(0, 10), c[1], c[2], c[3], c[4]] as [string, number, number, number, number]).reverse() })
+      const bars = candles.map(c => [String(c[0]).slice(0, 10), c[1], c[2], c[3], c[4]] as [string, number, number, number, number]).reverse()
+      // The source can lag the exchange files by hours. Bars ending before `date` would be shown as that day's close, so leave
+      // the index out and let a later run fetch it again.
+      if (bars[bars.length - 1][0] !== date) continue
+      items.push({ id: ix.id, name: ix.name, bars })
     } catch { /* one index failing must not block the stocks */ }
   }
   return { date, items }
@@ -204,7 +209,26 @@ export async function advance(deps: Deps, opts: Options = {}): Promise<Result> {
     res.latestDate = d
   }
 
-  if (!newDays.length && !metaFresh) return res
+  if (!newDays.length && !metaFresh) {
+    // Indices are fetched again here when they are behind, so they catch up without waiting for the exchange files: the stocks
+    // are only known once NSE and BSE publish, but an index bar for today exists as soon as the session is over.
+    const ixDate = previous.indices?.date ?? ''
+    const target = afterClose(t0) && today > (previous.latestDate ?? '') ? today : previous.latestDate
+    if (!rebuild && previous.latestDate && target && ixDate < target) {
+      const ix = await fetchIndices(deps, target)
+      if (ix.items.length) {
+        const file = `indices-${ix.date}.json.gz`
+        const urls = { ...previous.urls, [file]: await deps.store.putJson(file, ix) }
+        const old = previous.indices && previous.indices.file !== file ? [previous.indices.file] : []
+        for (const f of old) delete urls[f]
+        res.wrote.push(file)
+        await deps.store.putManifest({ ...previous, indices: { file, date: ix.date }, urls, updatedAt: new Date(deps.now()).toISOString() })
+        res.wrote.push('manifest.json')
+        await deps.store.remove(old)
+      }
+    }
+    return res
+  }
   // Published data is only replaced once the rebuild has reached the session the old data already had.
   const publishing = !rebuild || (res.latestDate ?? '') >= (previous.latestDate ?? '')
   if (!publishing) res.staged = true

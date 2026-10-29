@@ -18,7 +18,7 @@ import type { FyersSession } from './providers/fyers/types'
 import { BreezeClient } from './providers/breeze/client'
 import { BreezeProvider } from './providers/breeze/provider'
 import { BREEZE_INDICES } from './providers/breeze/codes'
-import { BENCHMARK_FOR, MarketUnavailable, fetchIndexBars, fetchManifest, fetchPulse, fetchSearchIndex, realNet, syncExchange, toCandleSet, type Pulse, type SearchItem } from './market/client'
+import { BENCHMARK_FOR, MarketUnavailable, catchUp, fetchIndexBars, fetchManifest, fetchPulse, fetchSearchIndex, realNet, syncExchange, toCandleSet, type Pulse, type SearchItem } from './market/client'
 import type { Exchange, History } from '../api/_lib/data/history'
 import { loadMaster } from './providers/breeze/master'
 import type { Candle } from './domain/types'
@@ -200,9 +200,16 @@ export const useApp = create<State>((set, get) => {
 
   /** Daily index bars for the dashboard strip: cache-first, a handful of calls per session. */
   /** Small file, so it loads at startup for every data source: gives Sensex and the other indices without any broker. */
-  async function loadMarketIndices() {
+  async function loadMarketIndices(askBackend = true) {
     try {
       const manifest = await fetchManifest()
+      // Shown as published right away; if the backend then picks up today's close, the strip and any loaded stocks update.
+      if (askBackend) void catchUp(manifest).then(changed => {
+        if (!changed) return
+        void loadMarketIndices(false)
+        const exs = (['NSE', 'BSE'] as const).filter(ex => marketHist[ex])
+        if (exs.length) void get().loadMarketData([...exs])
+      })
       void fetchPulse(manifest).then(pulse => { if (pulse) set({ pulse }) }).catch(() => { /* panels show a note instead */ })
       const items = await fetchIndexBars(manifest)
       if (!items.length) return
